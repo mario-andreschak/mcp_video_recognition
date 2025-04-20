@@ -3,11 +3,10 @@
  */
 
 import { 
-  GoogleGenerativeAI,
-  GenerativeModel,
-  Part,
-  FileData
-} from '@google/generative-ai';
+  GoogleGenAI,
+  createUserContent,
+  createPartFromUri
+} from '@google/genai';
 import { createLogger } from '../utils/logger.js';
 import type { GeminiConfig, GeminiFile, GeminiResponse } from '../types/index.js';
 import * as fs from 'node:fs';
@@ -16,25 +15,11 @@ import * as path from 'node:path';
 const log = createLogger('GeminiService');
 
 export class GeminiService {
-  private readonly client: GoogleGenerativeAI;
-  private readonly models: Map<string, GenerativeModel> = new Map();
+  private readonly client: GoogleGenAI;
 
   constructor(config: GeminiConfig) {
-    this.client = new GoogleGenerativeAI(config.apiKey);
+    this.client = new GoogleGenAI({ apiKey: config.apiKey });
     log.info('Initialized Gemini service');
-  }
-
-  /**
-   * Get or create a model instance
-   */
-  private getModel(modelName: string): GenerativeModel {
-    if (!this.models.has(modelName)) {
-      log.debug(`Creating new model instance for ${modelName}`);
-      const model = this.client.getGenerativeModel({ model: modelName });
-      this.models.set(modelName, model);
-      return model;
-    }
-    return this.models.get(modelName)!;
   }
 
   /**
@@ -66,15 +51,21 @@ export class GeminiService {
         throw new Error(`Unsupported file extension: ${ext}`);
       }
       
-      // Read file as binary data
-      const fileData = await fs.promises.readFile(filePath);
+      // Upload file to Google's servers
+      const uploadedFile = await this.client.files.upload({
+        file: filePath,
+        config: { mimeType }
+      });
       
-      // For now, we'll simulate the file upload since the SDK doesn't support it directly
-      // In a real implementation, you would use a proper file upload mechanism
-      log.info(`File read successfully: ${filePath}`);
+      log.info(`File uploaded successfully: ${filePath}`);
+      log.verbose('Uploaded file details', JSON.stringify(uploadedFile));
+      
+      if (!uploadedFile.uri) {
+        throw new Error('File upload failed: No URI returned');
+      }
       
       return {
-        uri: `file://${filePath}`,
+        uri: uploadedFile.uri,
         mimeType
       };
     } catch (error) {
@@ -89,23 +80,23 @@ export class GeminiService {
   async processFile(file: GeminiFile, prompt: string, modelName: string): Promise<GeminiResponse> {
     try {
       log.debug(`Processing file with model ${modelName}`);
-      log.verbose('Processing with parameters', { file, prompt, modelName });
+      log.verbose('Processing with parameters', JSON.stringify({ file, prompt, modelName }));
       
-      const model = this.getModel(modelName);
-      
-      // Create parts for the content
-      const parts: Part[] = [
-        { text: prompt },
-        { fileData: { mimeType: file.mimeType, fileUri: file.uri } as FileData }
-      ];
-      
-      const response = await model.generateContent(parts);
+      const response = await this.client.models.generateContent({
+        model: modelName,
+        contents: createUserContent([
+          createPartFromUri(file.uri, file.mimeType),
+          prompt
+        ])
+      });
       
       log.debug('Received response from Gemini API');
       log.verbose('Gemini API response', JSON.stringify(response));
       
+      const responseText = response.text || '';
+      
       return {
-        text: response.response.text()
+        text: responseText
       };
     } catch (error) {
       log.error('Error processing file with Gemini API', error);
