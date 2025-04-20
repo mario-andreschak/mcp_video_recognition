@@ -16,6 +16,8 @@ An MCP (Model Context Protocol) server that provides tools for image, audio, and
 
 ## Installation
 
+### Manual Installation
+
 1. Clone the repository:
    ```bash
    git clone https://github.com/yourusername/mcp-video-recognition.git
@@ -31,6 +33,41 @@ An MCP (Model Context Protocol) server that provides tools for image, audio, and
    ```bash
    npm run build
    ```
+
+### Installing in FLUJO
+
+1. Click Add Server
+2. Copy & Paste Github URL into FLUJO
+3. Click Parse, Clone, Install, Build and Save.
+
+### Installing via Configuration Files
+
+To integrate this MCP server with Cline or other MCP clients via configuration files:
+
+1. Open your Cline settings:
+   - In VS Code, go to File -> Preferences -> Settings
+   - Search for "Cline MCP Settings"
+   - Click "Edit in settings.json"
+
+2. Add the server configuration to the `mcpServers` object:
+   ```json
+   {
+     "mcpServers": {
+       "video-recognition": {
+         "command": "node",
+         "args": [
+           "/path/to/mcp-video-recognition/dist/index.js"
+         ],
+         "disabled": false,
+         "autoApprove": []
+       }
+     }
+   }
+   ```
+
+3. Replace `/path/to/mcp-video-recognition/dist/index.js` with the actual path to the `index.js` file in your project directory. Use forward slashes (/) or double backslashes (\\\\) for the path on Windows.
+
+4. Save the settings file. Cline should automatically connect to the server.
 
 ## Configuration
 
