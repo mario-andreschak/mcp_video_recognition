@@ -8,6 +8,8 @@ import { GeminiService } from '../services/gemini.js';
 import { AudioRecognitionParamsSchema } from '../types/index.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { AudioRecognitionParams } from '../types/index.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 const log = createLogger('AudioRecognitionTool');
 
@@ -21,14 +23,27 @@ export const createAudioRecognitionTool = (geminiService: GeminiService) => {
         log.info(`Processing audio recognition request for file: ${args.filepath}`);
         log.verbose('Audio recognition request', JSON.stringify(args));
         
+        // Verify file exists
+        if (!fs.existsSync(args.filepath)) {
+          throw new Error(`Audio file not found: ${args.filepath}`);
+        }
+        
+        // Verify file is an audio
+        const ext = path.extname(args.filepath).toLowerCase();
+        if (!['.mp3', '.wav', '.ogg'].includes(ext)) {
+          throw new Error(`Unsupported audio format: ${ext}. Supported formats are: .mp3, .wav, .ogg`);
+        }
+        
         // Default prompt if not provided
         const prompt = args.prompt || 'Describe this audio';
         const modelName = args.modelname || 'gemini-2.0-flash';
         
         // Upload the file
+        log.info('Uploading audio file...');
         const file = await geminiService.uploadFile(args.filepath);
         
         // Process with Gemini
+        log.info('Generating content from audio...');
         const result = await geminiService.processFile(file, prompt, modelName);
         
         if (result.isError) {

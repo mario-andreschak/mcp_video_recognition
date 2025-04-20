@@ -54,6 +54,33 @@ export interface GeminiConfig {
 export interface GeminiFile {
   uri: string;
   mimeType: string;
+  name?: string;
+  state?: string;
+}
+
+export interface ProcessedGeminiFile {
+  uri: string;
+  mimeType: string;
+  name: string;
+  state: string;
+}
+
+export interface CachedFile {
+  fileId: string;
+  checksum: string;
+  uri: string;
+  mimeType: string;
+  name: string;
+  state: string;
+  timestamp: number;
+}
+
+// File states from Gemini API
+export enum FileState {
+  UNSPECIFIED = 'STATE_UNSPECIFIED',
+  PROCESSING = 'PROCESSING',
+  ACTIVE = 'ACTIVE',
+  FAILED = 'FAILED'
 }
 
 export interface GeminiResponse {
