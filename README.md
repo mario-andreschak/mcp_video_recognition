@@ -7,8 +7,7 @@ An MCP (Model Context Protocol) server that provides tools for image, audio, and
 - **Image Recognition**: Analyze and describe images using Google Gemini AI
 - **Audio Recognition**: Analyze and transcribe audio using Google Gemini AI
 - **Video Recognition**: Analyze and describe videos using Google Gemini AI
-- **Multiple Transport Options**: Supports both stdio and SSE transports
-- **Strict TypeScript Typing**: Fully typed implementation with no `any` or `unknown` types
+
 
 ## Prerequisites
 
