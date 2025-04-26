@@ -34,7 +34,7 @@ An MCP (Model Context Protocol) server that provides tools for image, audio, and
    npm run build
    ```
 
-### Installing in FLUJO
+### Installing in [FLUJO](https://github.com/mario-andreschak/FLUJO/)
 
 1. Click Add Server
 2. Copy & Paste Github URL into FLUJO
