@@ -2,12 +2,15 @@
 
 An MCP (Model Context Protocol) server that provides tools for image, audio, and video recognition using Google's Gemini AI.
 
+<a href="https://glama.ai/mcp/servers/@mario-andreschak/mcp_video_recognition">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@mario-andreschak/mcp_video_recognition/badge" alt="Video Recognition Server MCP server" />
+</a>
+
 ## Features
 
 - **Image Recognition**: Analyze and describe images using Google Gemini AI
 - **Audio Recognition**: Analyze and transcribe audio using Google Gemini AI
 - **Video Recognition**: Analyze and describe videos using Google Gemini AI
-
 
 ## Prerequisites
 
