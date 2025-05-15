@@ -1,4 +1,5 @@
 # MCP Video Recognition Server
+[![smithery badge](https://smithery.ai/badge/@mario-andreschak/mcp_video_recognition)](https://smithery.ai/server/@mario-andreschak/mcp_video_recognition)
 
 An MCP (Model Context Protocol) server that provides tools for image, audio, and video recognition using Google's Gemini AI.
 
@@ -18,6 +19,14 @@ An MCP (Model Context Protocol) server that provides tools for image, audio, and
 - Google Gemini API key
 
 ## Installation
+
+### Installing via Smithery
+
+To install Video Recognition Server for Claude Desktop automatically via [Smithery](https://smithery.ai/server/@mario-andreschak/mcp_video_recognition):
+
+```bash
+npx -y @smithery/cli install @mario-andreschak/mcp_video_recognition --client claude
+```
 
 ### Manual Installation
 
