@@ -17,8 +17,9 @@ import {
   isValidProviderIdentifier,
   type GeminiProviderConfig
 } from './provider-config.js';
-import { createProviderFailure } from './provider-failure.js';
+import { createProviderFailure, isProviderFailure } from './provider-failure.js';
 import { normalizeGeminiGenerationFailure } from './gemini-error-classifier.js';
+import { classifyLocalMediaPreparationFailure } from './media-preparation-error.js';
 import {
   createProviderModelCooldownStore,
   type ProviderModelCooldownStore
@@ -38,6 +39,8 @@ const supportedExtensions = {
 } as const;
 
 const mapGeminiPreparationFailure = (cause: unknown): Error => {
+  if (isProviderFailure(cause)) return cause;
+
   if (cause instanceof GeminiVideoProcessingTimeoutError) {
     return createProviderFailure({
       provider: 'gemini',
@@ -48,12 +51,16 @@ const mapGeminiPreparationFailure = (cause: unknown): Error => {
     });
   }
 
-  return createProviderFailure({
-    provider: 'gemini',
-    category: 'unknown',
-    safeMessage: 'Gemini request failed.',
-    cause
-  });
+  const localFailure = classifyLocalMediaPreparationFailure(cause);
+  if (localFailure !== undefined) {
+    return createProviderFailure({
+      provider: 'gemini',
+      ...localFailure,
+      cause
+    });
+  }
+
+  return normalizeGeminiGenerationFailure(cause).failure;
 };
 
 export class GeminiRecognitionProvider implements RecognitionProvider {

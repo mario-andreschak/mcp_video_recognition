@@ -1,0 +1,3 @@
+# The existing repository includes tracked CRLF text files. Treat only the CR as part of the line ending.
+*.md whitespace=cr-at-eol
+*.ts whitespace=cr-at-eol

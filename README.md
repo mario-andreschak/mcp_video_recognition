@@ -58,9 +58,29 @@ Add the server to your MCP client config and point it at the built `dist/index.j
 }
 ```
 
-On Windows, use forward slashes or doubled backslashes (`\\`) in the path. Save the file and reconnect your MCP client.
+On Windows, use forward slashes or doubled backslashes (`\\`) in the path. Save the file and reconnect your MCP client. Environment variables must be present in the MCP client's `env` configuration; the server process does not automatically inherit values merely because a `.env` file exists beside it.
 
 For OpenRouter or another OpenAI-compatible endpoint, set `RECOGNITION_PROVIDER=openai-compatible` and fill in its variables. [Configuration](docs/CONFIGURATION.md) has a ready-made example.
+
+## Standalone Client
+
+The repository includes a client that builds the project, spawns the server over stdio, performs MCP initialization, and lists the tools. It loads `.env` from the repository root when that file exists; already-set process environment variables take precedence.
+
+```bash
+# Connect and list tools
+npm run client
+
+# Connect and call a tool
+npm run client -- --tool image_recognition --args '{"filepath":"C:/media/example.png"}'
+```
+
+Use `--help` for server-path, working-directory, env-file, and timeout options:
+
+```bash
+npm run client -- --help
+```
+
+A tool error exits with status 2 and prints the complete MCP error result. Connection or configuration failures exit with status 1 and include the spawned server's stderr diagnostics.
 
 <details>
 <summary>Other install options (FLUJO)</summary>
@@ -86,6 +106,10 @@ The server reads environment variables. These are the ones you'll touch most:
 | `OPENAI_COMPATIBLE_BASE_URL` | none | Endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | none | Model to use |
 | `ALLOWED_MEDIA_ROOTS` | none | Media directories for the OpenAI-compatible provider and Gemini backup |
+| `TRANSPORT_TYPE` | `stdio` | `stdio` or `streamable-http`; `sse` is a legacy alias |
+| `MCP_HOST` | `127.0.0.1` | Bind address for Streamable HTTP |
+| `PORT` | `3000` | Bind port for Streamable HTTP |
+| `LOG_LEVEL` | `info` | Diagnostic threshold; all logs go to stderr |
 
 A bad value stops startup. Nothing gets fixed silently.
 
@@ -119,11 +143,32 @@ Example:
 
 The **[Security Reference](docs/SECURITY.md)** covers endpoint rules, resource limits, and incident response.
 
+## MCP Inspector and Streamable HTTP
+
+For stdio Inspector use, build first and make sure the API key is in Inspector's server environment. In PowerShell:
+
+```powershell
+$env:GOOGLE_API_KEY = "your_google_api_key"
+npm run debug
+```
+
+For HTTP, start the server separately:
+
+```powershell
+$env:GOOGLE_API_KEY = "your_google_api_key"
+$env:TRANSPORT_TYPE = "streamable-http"
+npm start
+```
+
+Then select **Streamable HTTP** in Inspector and connect to `http://127.0.0.1:3000/mcp`. Do not select legacy SSE: the backwards-compatible `TRANSPORT_TYPE=sse` spelling still starts a Streamable HTTP endpoint.
+
+Listing tools only proves the MCP handshake succeeded. It does not contact the recognition provider or read a media file. A later call can still fail because the key, model, network, or `filepath` is invalid. The path must identify a file visible to the spawned server process; paths from a different container or host will not work.
+
 ## Development
 
 ```bash
-# Run in development mode
-GOOGLE_API_KEY=your_api_key npm run dev
+# Build, connect through the standalone client, and list tools
+GOOGLE_API_KEY=your_api_key npm run client
 
 # Build and run the provider foundation tests
 npm run verify:provider-foundation

@@ -84,7 +84,7 @@ export class GeminiService {
         state: file.state?.toString()
       };
     } catch (error) {
-      log.error(`Error retrieving file ${name}`, error);
+      log.error('Error retrieving uploaded media state');
       throw error;
     }
   }
@@ -97,7 +97,7 @@ export class GeminiService {
       throw new Error('File name is required to check processing status');
     }
 
-    log.info(`Waiting for video processing: ${file.name}`);
+    log.info('Waiting for video processing');
     
     const startTime = Date.now();
     let currentFile = file;
@@ -122,7 +122,7 @@ export class GeminiService {
       }
     }
     
-    log.info(`Video processing completed: ${file.name}`);
+    log.info('Video processing completed');
     
     // Ensure all required fields are present
     if (!currentFile.name || !currentFile.state) {
@@ -143,7 +143,7 @@ export class GeminiService {
   async uploadFile(filePath: string): Promise<GeminiFile> {
     const existingPromise = this.inFlightUploads.get(filePath);
     if (existingPromise) {
-      log.info(`Coalescing with in-flight upload for: ${filePath}`);
+      log.info('Coalescing with in-flight media upload');
       return existingPromise;
     }
 
@@ -168,7 +168,7 @@ export class GeminiService {
       // Check if file is in cache and still valid
       const cachedFile = this.fileCache.get(checksum);
       if (cachedFile && this.isCacheValid(checksum)) {
-        log.info(`Using cached file: ${cachedFile.name}`);
+        log.info('Using cached media upload');
         
         // Return cached file info
         return {
@@ -209,7 +209,7 @@ export class GeminiService {
         config: { mimeType }
       });
       
-      log.info(`File uploaded successfully: ${filePath}`);
+      log.info('Media file uploaded successfully');
       log.verbose('Uploaded file details', JSON.stringify(uploadedFile));
       
       if (!uploadedFile.uri || !uploadedFile.name) {
@@ -268,7 +268,7 @@ export class GeminiService {
       
       return file;
     } catch (error) {
-      log.error('Error uploading file', error);
+      log.error('Error uploading media file');
       throw error;
     }
   }
@@ -307,7 +307,7 @@ export class GeminiService {
     try {
       return await this.processFileOrThrow(file, prompt, modelName ?? DEFAULT_GEMINI_MODEL);
     } catch (error) {
-      log.error('Error processing file with Gemini API', error);
+      log.error('Error processing media with Gemini API');
       return {
         text: `Error processing file: ${error instanceof Error ? error.message : String(error)}`,
         isError: true

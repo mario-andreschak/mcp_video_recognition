@@ -16,9 +16,10 @@ Variable names and provider values are case-sensitive. Leading and trailing spac
 | Variable | Required | Default | Rules |
 |---|---:|---|---|
 | `RECOGNITION_PROVIDER` | No | `gemini` | Must be `gemini` or `openai-compatible`. Leave it unset for Gemini. |
-| `TRANSPORT_TYPE` | No | `stdio` | `sse` selects SSE; anything else uses stdio. |
-| `PORT` | No | `3000` when SSE starts with no port set | Only used by the SSE transport. |
-| `LOG_LEVEL` | No | `fatal` | One of `verbose`, `debug`, `info`, `warn`, `error`, or `fatal`. |
+| `TRANSPORT_TYPE` | No | `stdio` | `stdio`, `streamable-http`, or `streamable`. The legacy `sse` value is accepted as a Streamable HTTP alias; it does not enable legacy SSE. |
+| `MCP_HOST` | No | `127.0.0.1` | Bind address used only by Streamable HTTP. |
+| `PORT` | No | `3000` | Decimal integer from `0` through `65535`, used only by Streamable HTTP. |
+| `LOG_LEVEL` | No | `info` | One of `verbose`, `debug`, `info`, `warn`, `error`, or `fatal`. Diagnostics always use stderr so stdio JSON-RPC remains clean. |
 
 Only the selected provider's variables get checked. Bad values for the unselected one are ignored. Both credential sets can sit side by side; `RECOGNITION_PROVIDER` still decides which one runs.
 
@@ -87,8 +88,9 @@ Variant A - single Gemini model (`GEMINI_MODEL`), no recovery route:
       "env": {
         "RECOGNITION_PROVIDER": "gemini",
         "TRANSPORT_TYPE": "stdio",
+        "MCP_HOST": "127.0.0.1",
         "PORT": "3000",
-        "LOG_LEVEL": "fatal",
+        "LOG_LEVEL": "info",
 
         "GOOGLE_API_KEY": "your_google_api_key",
         "GEMINI_MODEL": "gemini-3.5-flash",

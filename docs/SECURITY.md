@@ -19,7 +19,7 @@ The [README](../README.md) has the short version. This file holds the full endpo
 - Inline media is bounded by `MAX_INLINE_MEDIA_BYTES` before read/base64 allocation.
 - Model names are limited to 200 Unicode characters; provider labels to 64. Both reject C0 controls, DEL, U+2028, and U+2029.
 - Provider `safeMessage` strings are fixed, free of line separators, and under 4 KiB.
-- That limit is not a general escaping or 4 KiB cap on logger output or non-provider errors. `LOG_LEVEL` defaults to `fatal`; use higher log levels only in a controlled environment. Raw credentials, authorization headers, response bodies, prompts, paths, data URLs, and encoded media never appear in `ProviderFailure` safe messages.
+- That limit is not a general escaping or 4 KiB cap on logger output or non-provider errors. `LOG_LEVEL` defaults to `info`; operational diagnostics use stderr, while `debug` and `verbose` should be enabled only in a controlled environment. Raw credentials, authorization headers, response bodies, prompts, paths, data URLs, and encoded media never appear in `ProviderFailure` safe messages.
 
 ## Credentials and Incident Response
 

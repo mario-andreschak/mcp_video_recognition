@@ -1,5 +1,8 @@
 /**
- * Logger utility for the MCP server
+ * Logger utility for the MCP server.
+ *
+ * Stdio MCP reserves stdout for JSON-RPC messages, so every diagnostic is
+ * written to stderr regardless of severity.
  */
 
 export enum LogLevel {
@@ -11,12 +14,33 @@ export enum LogLevel {
   FATAL = 'fatal'
 }
 
+const LOG_LEVELS = Object.values(LogLevel);
+
+const formatDetail = (detail: unknown): string => {
+  if (detail === undefined) return '';
+  try {
+    if (detail instanceof Error) return `${detail.name}: ${detail.message}`;
+    if (typeof detail === 'string') return detail;
+    return JSON.stringify(detail);
+  } catch {
+    try {
+      return String(detail);
+    } catch {
+      return '[unprintable detail]';
+    }
+  }
+};
+
 export class Logger {
   private readonly name: string;
-  private static level: LogLevel = LogLevel.FATAL;
+  private static level: LogLevel = LogLevel.INFO;
 
   constructor(name: string) {
     this.name = name;
+  }
+
+  static isLogLevel(value: string): value is LogLevel {
+    return LOG_LEVELS.some(level => level === value);
   }
 
   static setLogLevel(level: LogLevel): void {
@@ -24,50 +48,40 @@ export class Logger {
   }
 
   private shouldLog(level: LogLevel): boolean {
-    const levels = Object.values(LogLevel);
-    return levels.indexOf(level) >= levels.indexOf(Logger.level);
+    return LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(Logger.level);
   }
 
-  private formatMessage(level: LogLevel, message: string): string {
+  private write(level: LogLevel, message: string, detail?: unknown): void {
+    if (!this.shouldLog(level)) return;
+
     const timestamp = new Date().toISOString();
-    return `[${timestamp}] [${level.toUpperCase()}] [${this.name}] ${message}`;
+    const formattedDetail = formatDetail(detail);
+    const suffix = formattedDetail.length === 0 ? '' : ` ${formattedDetail}`;
+    process.stderr.write(`[${timestamp}] [${level.toUpperCase()}] [${this.name}] ${message}${suffix}\n`);
   }
 
   verbose(message: string, data?: unknown): void {
-    if (this.shouldLog(LogLevel.VERBOSE)) {
-      const formattedData = data ? JSON.stringify(data) : '';
-      console.log(this.formatMessage(LogLevel.VERBOSE, message), formattedData);
-    }
+    this.write(LogLevel.VERBOSE, message, data);
   }
 
   debug(message: string, data?: unknown): void {
-    if (this.shouldLog(LogLevel.DEBUG)) {
-      console.log(this.formatMessage(LogLevel.DEBUG, message), data || '');
-    }
+    this.write(LogLevel.DEBUG, message, data);
   }
 
   info(message: string, data?: unknown): void {
-    if (this.shouldLog(LogLevel.INFO)) {
-      console.log(this.formatMessage(LogLevel.INFO, message), data || '');
-    }
+    this.write(LogLevel.INFO, message, data);
   }
 
   warn(message: string, data?: unknown): void {
-    if (this.shouldLog(LogLevel.WARN)) {
-      console.warn(this.formatMessage(LogLevel.WARN, message), data || '');
-    }
+    this.write(LogLevel.WARN, message, data);
   }
 
   error(message: string, error?: unknown): void {
-    if (this.shouldLog(LogLevel.ERROR)) {
-      console.error(this.formatMessage(LogLevel.ERROR, message), error || '');
-    }
+    this.write(LogLevel.ERROR, message, error);
   }
 
   fatal(message: string, error?: unknown): void {
-    if (this.shouldLog(LogLevel.FATAL)) {
-      console.error(this.formatMessage(LogLevel.FATAL, message), error || '');
-    }
+    this.write(LogLevel.FATAL, message, error);
   }
 }
 

@@ -22,9 +22,46 @@ import type { ServerConfig } from './server.js';
 
 const log = createLogger('Main');
 
-// Set log level from environment variable
-const logLevel = ( process.env.LOG_LEVEL || LogLevel.FATAL ) as LogLevel;
-Logger.setLogLevel(logLevel as LogLevel);
+const configureLogging = (): void => {
+  const configuredLevel = process.env.LOG_LEVEL?.trim() || LogLevel.INFO;
+  if (!Logger.isLogLevel(configuredLevel)) {
+    throw new Error(
+      `LOG_LEVEL must be one of: ${Object.values(LogLevel).join(', ')}`
+    );
+  }
+  Logger.setLogLevel(configuredLevel);
+};
+
+const parseTransport = (): ServerConfig['transport'] => {
+  const configuredTransport = process.env.TRANSPORT_TYPE?.trim() || 'stdio';
+  if (configuredTransport === 'stdio') return 'stdio';
+  if (configuredTransport === 'streamable-http' || configuredTransport === 'streamable') {
+    return 'streamable-http';
+  }
+  if (configuredTransport === 'sse') {
+    log.warn(
+      'TRANSPORT_TYPE=sse is a legacy alias; this endpoint uses Streamable HTTP, not legacy SSE'
+    );
+    return 'streamable-http';
+  }
+  throw new Error(
+    'TRANSPORT_TYPE must be stdio, streamable-http, or the legacy sse alias'
+  );
+};
+
+const parsePort = (): number | undefined => {
+  const configuredPort = process.env.PORT?.trim();
+  if (configuredPort === undefined || configuredPort.length === 0) return undefined;
+  if (!/^[0-9]+$/u.test(configuredPort)) {
+    throw new Error('PORT must be a decimal integer between 0 and 65535');
+  }
+
+  const port = Number(configuredPort);
+  if (!Number.isSafeInteger(port) || port < 0 || port > 65535) {
+    throw new Error('PORT must be a decimal integer between 0 and 65535');
+  }
+  return port;
+};
 
 /**
  * Load configuration from environment variables
@@ -59,17 +96,18 @@ async function loadConfig(): Promise<ServerConfig> {
     provider = new ParallelRecognitionProvider(provider, parallelPrompts, providerConfig.provider);
   }
 
-  // Determine transport type
-  const transportType = process.env.TRANSPORT_TYPE === 'sse' ? 'sse' : 'stdio';
-
-  // Parse port if provided
-  const portStr = process.env.PORT;
-  const port = portStr ? parseInt(portStr, 10) : undefined;
+  const transport = parseTransport();
+  const port = parsePort();
+  const configuredHost = process.env.MCP_HOST?.trim();
+  const host = configuredHost === undefined || configuredHost.length === 0
+    ? undefined
+    : configuredHost;
 
   return {
     provider,
-    transport: transportType,
-    port
+    transport,
+    port,
+    host
   };
 }
 
@@ -78,6 +116,7 @@ async function loadConfig(): Promise<ServerConfig> {
  */
 async function main(): Promise<void> {
   try {
+    configureLogging();
     log.info('Starting MCP video recognition server');
 
     // Load configuration
@@ -104,13 +143,14 @@ async function main(): Promise<void> {
     
     log.info('Server started successfully');
   } catch (error) {
-    log.error('Failed to start server', error);
-    process.exit(1);
+    log.fatal('Failed to start server', error);
+    process.exitCode = 1;
   }
 }
 
 // Start the server
 main().catch(error => {
-  console.error('Unhandled error:', error);
-  process.exit(1);
+  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  process.stderr.write(`Unhandled error: ${message}\n`);
+  process.exitCode = 1;
 });

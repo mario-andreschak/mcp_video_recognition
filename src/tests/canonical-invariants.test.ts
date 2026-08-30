@@ -9,6 +9,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -48,6 +49,11 @@ const invariants = [
 type FileKey = keyof typeof files;
 const sourceRoot = path.resolve(process.cwd(), '..');
 const checkerPath = path.resolve(process.cwd(), 'scripts/check-canonical-invariants.mjs');
+const missingCanonicalSources = Object.values(files)
+  .filter(relativePath => !existsSync(path.join(sourceRoot, relativePath)));
+const canonicalSourceSkip = missingCanonicalSources.length === 0
+  ? false
+  : `authoritative OpenSpec sources are not present: ${missingCanonicalSources.join(', ')}`;
 const temporaryRoot = await mkdtemp(path.join(tmpdir(), 'canonical-invariants-'));
 
 after(async () => {
@@ -82,14 +88,18 @@ const occurrenceOffsets = (content: string, needle: string): number[] => {
   }
 };
 
-test('pristine fixture passes from an unrelated current directory', async () => {
+test('pristine fixture passes from an unrelated current directory', {
+  skip: canonicalSourceSkip
+}, async () => {
   const root = await createFixture();
   const result = runChecker(root, tmpdir());
   assert.equal(result.error, undefined, 'checker must execute');
   assert.equal(result.status, 0, `${result.stdout}${result.stderr}`);
 });
 
-test('one-byte mutation of every declaring occurrence fails closed', async () => {
+test('one-byte mutation of every declaring occurrence fails closed', {
+  skip: canonicalSourceSkip
+}, async () => {
   let cases = 0;
   for (const invariant of invariants) {
     for (const [key, expectedCount] of Object.entries(invariant.counts) as [FileKey, number][]) {
@@ -114,7 +124,9 @@ test('one-byte mutation of every declaring occurrence fails closed', async () =>
   assert.equal(cases, 13);
 });
 
-test('missing files and occurrence-count drift fail closed', async () => {
+test('missing files and occurrence-count drift fail closed', {
+  skip: canonicalSourceSkip
+}, async () => {
   const missingRoot = await createFixture();
   await rm(path.join(missingRoot, files.geminiSpec));
   assert.equal(runChecker(missingRoot).status, 1);

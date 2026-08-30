@@ -1,17 +1,14 @@
 /**
  * MCP server implementation
- * status: active
- * phase: phase-5-tool-server-wiring
- * sprint: provider-foundation-first-sprint
- * last_modified: 2026-08-06
- * agent_notes: "Server injects a single RecognitionProvider selected at startup into all tools."
- * insights: "Transport, session, and routing logic are unchanged; only the recognition dependency moved behind the provider contract."
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { randomUUID } from 'crypto';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { randomUUID } from 'node:crypto';
+import type { Server as HttpServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import type { Request, Response } from 'express';
 import { createLogger } from './utils/logger.js';
 import { createImageRecognitionTool } from './tools/image-recognition.js';
@@ -21,230 +18,263 @@ import type { RecognitionProvider } from './types/provider.js';
 
 const log = createLogger('Server');
 
+export type ServerTransport = 'stdio' | 'streamable-http';
+
 export interface ServerConfig {
   provider: RecognitionProvider;
-  transport: 'stdio' | 'sse';
+  transport: ServerTransport;
   port?: number;
+  host?: string;
+}
+
+interface HttpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
 }
 
 export class Server {
-  private readonly mcpServer: McpServer;
   private readonly recognitionProvider: RecognitionProvider;
   private readonly config: ServerConfig;
+  private readonly httpSessions = new Map<string, HttpSession>();
+  private stdioServer?: McpServer;
+  private httpServer?: HttpServer;
 
   constructor(config: ServerConfig) {
     this.config = config;
-
-    // Retain the selected recognition provider
     this.recognitionProvider = config.provider;
+  }
 
-    // Create MCP server
-    this.mcpServer = new McpServer({
+  /**
+   * Create one MCP protocol server per transport connection.
+   *
+   * The SDK only permits a McpServer to connect to one transport. HTTP sessions
+   * therefore cannot share the stdio server or each other's server instance.
+   */
+  private createMcpServer(): McpServer {
+    const mcpServer = new McpServer({
       name: 'mcp-video-recognition',
       version: '1.0.0'
     });
 
-    // Register tools
-    this.registerTools();
-
-    log.info('MCP server initialized');
-  }
-
-  /**
-   * Register all tools with the MCP server
-   */
-  private registerTools(): void {
-    // Create tools
     const imageRecognitionTool = createImageRecognitionTool(this.recognitionProvider);
     const audioRecognitionTool = createAudioRecognitionTool(this.recognitionProvider);
     const videoRecognitionTool = createVideoRecognitionTool(this.recognitionProvider);
-    
-    // Register tools with MCP server
-    this.mcpServer.tool(
+
+    mcpServer.tool(
       imageRecognitionTool.name,
       imageRecognitionTool.description,
       imageRecognitionTool.inputSchema.shape,
       imageRecognitionTool.callback
     );
-    
-    this.mcpServer.tool(
+
+    mcpServer.tool(
       audioRecognitionTool.name,
       audioRecognitionTool.description,
       audioRecognitionTool.inputSchema.shape,
       audioRecognitionTool.callback
     );
-    
-    this.mcpServer.tool(
+
+    mcpServer.tool(
       videoRecognitionTool.name,
       videoRecognitionTool.description,
       videoRecognitionTool.inputSchema.shape,
       videoRecognitionTool.callback
     );
-    
-    log.info('All tools registered with MCP server');
+
+    return mcpServer;
   }
 
-  /**
-   * Start the server with the configured transport
-   */
   async start(): Promise<void> {
-    try {
-      if (this.config.transport === 'stdio') {
-        await this.startWithStdio();
-      } else if (this.config.transport === 'sse') {
-        await this.startWithSSE();
-      } else {
-        throw new Error(`Unsupported transport: ${this.config.transport}`);
-      }
-    } catch (error) {
-      log.error('Failed to start server', error);
-      throw error;
+    if (this.config.transport === 'stdio') {
+      await this.startWithStdio();
+      return;
     }
+
+    if (this.config.transport === 'streamable-http') {
+      await this.startWithStreamableHttp();
+      return;
+    }
+
+    const unreachableTransport: never = this.config.transport;
+    throw new Error(`Unsupported transport: ${String(unreachableTransport)}`);
   }
 
-  /**
-   * Start the server with stdio transport
-   */
   private async startWithStdio(): Promise<void> {
     log.info('Starting server with stdio transport');
-    
+
+    const server = this.createMcpServer();
     const transport = new StdioServerTransport();
-    
+
     transport.onclose = () => {
       log.info('Stdio transport closed');
     };
-    
-    transport.onerror = (error) => {
+
+    transport.onerror = error => {
       log.error('Stdio transport error', error);
     };
-    
-    await this.mcpServer.connect(transport);
+
+    await server.connect(transport);
+    this.stdioServer = server;
     log.info('Server started with stdio transport');
   }
 
-  /**
-   * Start the server with SSE transport
-   */
-  private async startWithSSE(): Promise<void> {
-    log.info('Starting server with SSE transport');
-    
-    // Import express dynamically to avoid loading it when using stdio
+  private getSessionId(req: Request): string | undefined {
+    const value = req.headers['mcp-session-id'];
+    return typeof value === 'string' ? value : undefined;
+  }
+
+  private sendInvalidSession(res: Response): void {
+    res.status(400).json({
+      jsonrpc: '2.0',
+      error: {
+        code: -32000,
+        message: 'Bad Request: No valid session ID provided'
+      },
+      id: null
+    });
+  }
+
+  private async startWithStreamableHttp(): Promise<void> {
     const express = await import('express');
     const app = express.default();
-    const port = this.config.port || 3000;
-    
+    const port = this.config.port ?? 3000;
+    const host = this.config.host ?? '127.0.0.1';
+
     app.use(express.json());
-    
-    // Map to store transports by session ID
-    const transports = new Map<string, StreamableHTTPServerTransport>();
-    
-    // Handle POST requests for client-to-server communication
+
     app.post('/mcp', async (req, res) => {
+      let initializingSession: HttpSession | undefined;
+
       try {
-        // Check for existing session ID
-        const sessionId = req.headers['mcp-session-id'] as string | undefined;
-        let transport: StreamableHTTPServerTransport;
-        
-        const existingTransport = sessionId ? transports.get(sessionId) : undefined;
-        if (sessionId && existingTransport) {
-          // Reuse existing transport
-          transport = existingTransport;
-          log.debug(`Using existing transport for session: ${sessionId}`);
-        } else {
-          log.error('No valid session ID provided');
-          res.status(400).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32000,
-              message: 'Bad Request: No valid session ID provided',
-            },
-            id: null,
-          });
+        const sessionId = this.getSessionId(req);
+        const existingSession = sessionId === undefined
+          ? undefined
+          : this.httpSessions.get(sessionId);
+
+        if (existingSession !== undefined) {
+          await existingSession.transport.handleRequest(req, res, req.body);
           return;
         }
-        
-        // Handle the request
+
+        if (sessionId !== undefined || !isInitializeRequest(req.body)) {
+          this.sendInvalidSession(res);
+          return;
+        }
+
+        const server = this.createMcpServer();
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: initializedSessionId => {
+            this.httpSessions.set(initializedSessionId, { server, transport });
+            log.info(`Streamable HTTP session initialized: ${initializedSessionId}`);
+          }
+        });
+        initializingSession = { server, transport };
+
+        transport.onclose = () => {
+          if (transport.sessionId !== undefined) {
+            this.httpSessions.delete(transport.sessionId);
+            log.info(`Streamable HTTP session closed: ${transport.sessionId}`);
+          }
+        };
+        transport.onerror = error => {
+          log.error('Streamable HTTP transport error', error);
+        };
+
+        await server.connect(transport);
         await transport.handleRequest(req, res, req.body);
       } catch (error) {
-        log.error('Error handling MCP request', error);
+        log.error('Error handling MCP POST request', error);
+        if (initializingSession !== undefined && initializingSession.transport.sessionId === undefined) {
+          await initializingSession.server.close().catch(closeError => {
+            log.error('Error closing failed MCP session', closeError);
+          });
+        }
         if (!res.headersSent) {
           res.status(500).json({
             jsonrpc: '2.0',
             error: {
               code: -32603,
-              message: 'Internal server error',
+              message: 'Internal server error'
             },
-            id: null,
+            id: null
           });
         }
       }
     });
-    
-    // Reusable handler for GET and DELETE requests
-    const handleSessionRequest = async (req: Request, res: Response) => {
-      const sessionId = req.headers['mcp-session-id'] as string | undefined;
-      const transport = sessionId ? transports.get(sessionId) : undefined;
-      if (!transport) {
-        res.status(400).send('Invalid or missing session ID');
-        return;
-      }
 
-      await transport.handleRequest(req, res);
-    };
-    
-    // Handle GET requests for server-to-client notifications via SSE
-    app.get('/mcp', async (req, res) => {
+    const handleEstablishedSession = async (req: Request, res: Response): Promise<void> => {
       try {
-        // Create a new transport for this connection
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (sessionId) => {
-            // Store the transport by session ID
-            transports.set(sessionId, transport);
-            log.info(`New session initialized: ${sessionId}`);
-          }
-        });
-        
-        // Clean up transport when closed
-        transport.onclose = () => {
-          if (transport.sessionId) {
-            transports.delete(transport.sessionId);
-            log.info(`Session closed: ${transport.sessionId}`);
-          }
-        };
-        
-        // Connect to the MCP server
-        await this.mcpServer.connect(transport);
-        
-        // Handle the initial GET request
-        await transport.handleRequest(req, res);
+        const sessionId = this.getSessionId(req);
+        const session = sessionId === undefined
+          ? undefined
+          : this.httpSessions.get(sessionId);
+
+        if (session === undefined) {
+          this.sendInvalidSession(res);
+          return;
+        }
+
+        await session.transport.handleRequest(req, res);
       } catch (error) {
-        log.error('Error handling SSE connection', error);
+        log.error(`Error handling MCP ${req.method} request`, error);
         if (!res.headersSent) {
           res.status(500).send('Internal server error');
         }
       }
+    };
+
+    app.get('/mcp', handleEstablishedSession);
+    app.delete('/mcp', handleEstablishedSession);
+
+    await new Promise<void>((resolve, reject) => {
+      const onError = (error: Error): void => {
+        reject(error);
+      };
+      const httpServer = app.listen(port, host, () => {
+        httpServer.off('error', onError);
+        this.httpServer = httpServer;
+        resolve();
+      });
+      httpServer.once('error', onError);
     });
-    
-    // Handle DELETE requests for session termination
-    app.delete('/mcp', handleSessionRequest);
-    
-    // Start the HTTP server
-    app.listen(port, () => {
-      log.info(`Server started with SSE transport on port ${port}`);
-    });
+
+    log.info(`Server started with Streamable HTTP transport at http://${host}:${this.getHttpPort()}/mcp`);
   }
 
-  /**
-   * Stop the server
-   */
+  getHttpPort(): number | undefined {
+    const address = this.httpServer?.address();
+    return address !== null && typeof address === 'object'
+      ? (address as AddressInfo).port
+      : undefined;
+  }
+
   async stop(): Promise<void> {
-    try {
-      await this.mcpServer.close();
-      log.info('Server stopped');
-    } catch (error) {
-      log.error('Error stopping server', error);
-      throw error;
+    const sessionServers = [...this.httpSessions.values()].map(session => session.server);
+    this.httpSessions.clear();
+
+    for (const server of sessionServers) {
+      await server.close().catch(error => {
+        log.error('Error closing MCP HTTP session', error);
+      });
     }
+
+    if (this.stdioServer !== undefined) {
+      await this.stdioServer.close();
+      this.stdioServer = undefined;
+    }
+
+    if (this.httpServer !== undefined) {
+      const httpServer = this.httpServer;
+      this.httpServer = undefined;
+      await new Promise<void>((resolve, reject) => {
+        httpServer.close(error => {
+          if (error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    }
+
+    log.info('Server stopped');
   }
 }

@@ -112,7 +112,9 @@ test('resolved package and public namespace are locked to installed @google/gena
   const source = await readFile(NODE_BUNDLE_PATH, 'utf8');
 
   assert.equal(packageJson.version, EXPECTED_VERSION);
-  assert.equal(Object.keys(genaiNamespace).length, 70);
+  const stableNamespaceKeys = Object.keys(genaiNamespace)
+    .filter(key => key !== 'default' && key !== 'module.exports');
+  assert.equal(stableNamespaceKeys.length, 68);
   assert.equal('GoogleGenAI' in genaiNamespace, true);
   assert.equal('ClientError' in genaiNamespace, false);
   assert.equal('ServerError' in genaiNamespace, false);
