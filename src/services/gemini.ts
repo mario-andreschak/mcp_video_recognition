@@ -3,9 +3,9 @@
  * status: active
  * phase: checkpoint-4-gemini-adapter
  * sprint: provider-foundation-first-sprint
- * last_modified: 2026-08-03
- * agent_notes: "Throwing generation seam and owned video-timeout identity; legacy wrapper remains compatible."
- * insights: "processFileOrThrow preserves original throws; remove the omitted-model bridge at checkpoint 7."
+ * last_modified: 2026-08-21
+ * agent_notes: "Throwing generation seam and owned video-timeout identity; legacy wrapper remains compatible. R3 added pre-cache FAILED rejection for every media kind."
+ * insights: "processFileOrThrow preserves original throws; remove the omitted-model bridge at checkpoint 7. R3: FAILED-state is rejected before any checksum-cache insertion so a stale URI cannot survive settlement; the in-flight promise is evicted by the uploadFile finally so the next call retries."
  */
 
 import { 
@@ -20,6 +20,7 @@ import { FileState } from '../types/index.js';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { setTimeout } from 'timers/promises';
 
 const log = createLogger('GeminiService');
 
@@ -28,6 +29,7 @@ export class GeminiVideoProcessingTimeoutError extends Error {}
 export class GeminiService {
   private readonly client: GoogleGenAI;
   private fileCache = new Map<string, CachedFile>();
+  private inFlightUploads = new Map<string, Promise<GeminiFile>>();
   private readonly cacheExpiration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
 
   constructor(config: GeminiConfig) {
@@ -100,7 +102,7 @@ export class GeminiService {
     const startTime = Date.now();
     let currentFile = file;
     
-    while (currentFile.state === FileState.PROCESSING) {
+    while (currentFile.state !== FileState.ACTIVE) {
       // Check if we've exceeded the maximum wait time
       if (Date.now() - startTime > maxWaitTimeMs) {
         throw new GeminiVideoProcessingTimeoutError(
@@ -109,7 +111,7 @@ export class GeminiService {
       }
       
       // Wait 2 seconds before checking again
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      await setTimeout(2000);
       
       // Get updated file status
       currentFile = await this.getFile(file.name);
@@ -139,6 +141,23 @@ export class GeminiService {
    * Upload a file to Gemini API with caching
    */
   async uploadFile(filePath: string): Promise<GeminiFile> {
+    const existingPromise = this.inFlightUploads.get(filePath);
+    if (existingPromise) {
+      log.info(`Coalescing with in-flight upload for: ${filePath}`);
+      return existingPromise;
+    }
+
+    const uploadPromise = this._doUploadFile(filePath);
+    this.inFlightUploads.set(filePath, uploadPromise);
+
+    try {
+      return await uploadPromise;
+    } finally {
+      this.inFlightUploads.delete(filePath);
+    }
+  }
+
+  private async _doUploadFile(filePath: string): Promise<GeminiFile> {
     try {
       log.debug(`Processing file upload request: ${filePath}`);
       
@@ -204,11 +223,20 @@ export class GeminiService {
         name: uploadedFile.name,
         state: uploadedFile.state?.toString()
       };
-      
+
+      // R3: Reject every supported media kind whose immediate upload state is FAILED
+      // BEFORE any checksum-based completed-cache insertion. The polling loop already
+      // throws on FAILED for videos; this guarantees image/audio/poll-already-ACTIVE
+      // paths do not cache a dead URI. The in-flight promise is evicted by the caller's
+      // `finally` so a subsequent call re-attempts the upload afresh.
+      if (file.state === FileState.FAILED) {
+        throw new Error(`Gemini file upload failed: ${file.name ?? filePath}`);
+      }
+
       // For videos, wait for processing to complete
       if (isVideo && file.state === FileState.PROCESSING) {
         const processedFile = await this.waitForVideoProcessing(file);
-        
+
         // Update cache with processed file
         this.fileCache.set(checksum, {
           fileId: processedFile.name,
@@ -219,7 +247,7 @@ export class GeminiService {
           state: processedFile.state,
           timestamp: Date.now()
         });
-        
+
         return processedFile;
       }
       

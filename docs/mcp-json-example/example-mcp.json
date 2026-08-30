@@ -1,0 +1,42 @@
+{
+  "inputs": [
+    {
+      "id": "video-recognition-gemini-api-key",
+      "type": "promptString",
+      "description": "Google Gemini API key",
+      "password": true
+    },
+    {
+      "id": "video-recognition-openrouter-api-key",
+      "type": "promptString",
+      "description": "OpenRouter API key",
+      "password": true
+    }
+  ],
+  "servers": {
+    "video-recognition": {
+      "type": "stdio",
+      "command": "node",
+      "cwd": "c:/Projects/video-recognition-mcp/PR_fork-video-recognition-mcp",
+      "args": [
+        "c:/Projects/video-recognition-mcp/PR_fork-video-recognition-mcp/dist/index.js"
+      ],
+      "env": {
+        "RECOGNITION_PROVIDER": "gemini",
+        "GOOGLE_API_KEY": "${input:video-recognition-gemini-api-key}",
+        "GEMINI_MODELS": "gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.5-flash-lite",
+        "GEMINI_MAX_ATTEMPTS": "4",
+        "GEMINI_COOLDOWN_SECONDS": "60",
+        "GEMINI_BACKUP_ENABLED": "true",
+        "PARALLEL_PROMPTS": "4",
+        "PARALLEL_MERGE_METHOD": "all_return",
+        "OPENAI_COMPATIBLE_API_KEY": "${input:video-recognition-openrouter-api-key}",
+        "OPENAI_COMPATIBLE_BASE_URL": "https://openrouter.ai/api/v1",
+        "OPENAI_COMPATIBLE_MODEL": "xiaomi/mimo-v2.5",
+        "OPENAI_COMPATIBLE_PROVIDER_LABEL": "OpenRouter",
+        "ALLOWED_MEDIA_ROOTS": "C:\\media",
+        "LOG_LEVEL": "warn"
+      }
+    }
+  }
+}

@@ -10,10 +10,11 @@
 
 import { Server } from './server.js';
 import { createLogger, LogLevel, Logger } from './utils/logger.js';
-import { loadRecognitionProviderConfig } from './services/provider-config.js';
+import { loadRecognitionProviderConfig, parseParallelPrompts } from './services/provider-config.js';
 import { GeminiService } from './services/gemini.js';
 import { GeminiRecognitionProvider } from './services/gemini-recognition-provider.js';
 import { OpenAICompatibleRecognitionProvider } from './services/openai-compatible-recognition-provider.js';
+import { ParallelRecognitionProvider } from './services/parallel-recognition-provider.js';
 import { createProviderModelCooldownStore } from './services/provider-cooldown-store.js';
 import { formatRecoveryDiagnosticEvent } from './services/recovery-diagnostics.js';
 import type { RecognitionProvider } from './types/provider.js';
@@ -51,6 +52,11 @@ async function loadConfig(): Promise<ServerConfig> {
     });
   } else {
     provider = new OpenAICompatibleRecognitionProvider(providerConfig);
+  }
+
+  const parallelPrompts = parseParallelPrompts(process.env);
+  if (parallelPrompts > 1) {
+    provider = new ParallelRecognitionProvider(provider, parallelPrompts, providerConfig.provider);
   }
 
   // Determine transport type

@@ -10,7 +10,7 @@
     "dev": "tsc -w & node --watch dist/index.js",
     "debug": "tsc & npx @modelcontextprotocol/inspector node dist/index.js",
     "lint": "eslint src",
-    "test": "tsc && node --test dist/tests/baseline.test.js dist/tests/transport-boundary.test.js dist/tests/provider-contract.test.js dist/tests/provider-config.test.js dist/tests/gemini-service.test.js dist/tests/gemini-recognition-provider.test.js dist/tests/openai-compatible-recognition-provider.test.js dist/tests/provider-injection.test.js dist/tests/gemini-sdk-characterization.test.js dist/tests/provider-foundation-gate.test.js dist/tests/gemini-recovery-config.test.js dist/tests/gemini-error-classifier.test.js dist/tests/gemini-recovery-router.test.js dist/tests/provider-cooldown-store.test.js dist/tests/recovery-diagnostics.test.js dist/tests/canonical-invariants.test.js",
+    "test": "tsc && node --test dist/tests/baseline.test.js dist/tests/transport-boundary.test.js dist/tests/provider-contract.test.js dist/tests/provider-config.test.js dist/tests/gemini-service.test.js dist/tests/gemini-recognition-provider.test.js dist/tests/openai-compatible-recognition-provider.test.js dist/tests/provider-injection.test.js dist/tests/gemini-sdk-characterization.test.js dist/tests/provider-foundation-gate.test.js dist/tests/gemini-recovery-config.test.js dist/tests/gemini-error-classifier.test.js dist/tests/gemini-recovery-router.test.js dist/tests/provider-cooldown-store.test.js dist/tests/recovery-diagnostics.test.js dist/tests/canonical-invariants.test.js dist/tests/parallel-recognition-provider.test.js",
     "check:canonical-invariants": "node scripts/check-canonical-invariants.mjs",
     "verify:provider-foundation": "npm run build && npm test"
   },

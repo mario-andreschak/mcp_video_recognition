@@ -1558,3 +1558,68 @@ test('canonical containment rejects an outside Windows directory junction', asyn
     }
   }
 });
+
+test('recognize coalesces overlapping real file preparation and base64 conversion', async () => {
+  const filepath = await writeTempFile('coalesced.png', Buffer.from('coalesced bytes'));
+  const observedBodies: string[] = [];
+  const { fetchFn, calls } = recordingFetch(call => {
+    observedBodies.push(String(call.init?.body));
+    return jsonResponse(successBody('ok'));
+  });
+  let reads = 0;
+  const provider = new OpenAICompatibleRecognitionProvider(config(), fetchFn, async file => {
+    reads += 1;
+    return readFile(file);
+  });
+
+  const [first, second] = await Promise.all([
+    provider.recognize(request({ filepath })),
+    provider.recognize(request({ filepath }))
+  ]);
+
+  assert.deepEqual([first, second], [{ text: 'ok' }, { text: 'ok' }]);
+  assert.equal(reads, 1, 'overlapping recognitions share one real read/base64 preparation');
+  assert.equal(calls.length, 2, 'each recognition still dispatches its own upstream request');
+  assert.match(observedBodies[0] ?? '', /Y29hbGVzY2VkIGJ5dGVz/u);
+  assert.match(observedBodies[1] ?? '', /Y29hbGVzY2VkIGJ5dGVz/u);
+});
+
+test('recognize evicts a rejected preparation so a later recognition retries', async () => {
+  const filepath = await writeTempFile('retry-read.png', Buffer.from('retry bytes'));
+  const { fetchFn, calls } = recordingFetch(() => jsonResponse(successBody('ok')));
+  let reads = 0;
+  const provider = new OpenAICompatibleRecognitionProvider(config(), fetchFn, async file => {
+    reads += 1;
+    if (reads === 1) throw new Error('read failed once');
+    return readFile(file);
+  });
+
+  const firstFailure = await captureFailure(provider, request({ filepath }));
+  assert.equal(firstFailure.category, 'unsupported-media');
+  assert.deepEqual(await provider.recognize(request({ filepath })), { text: 'ok' });
+  assert.equal(reads, 2, 'rejected preparation is evicted before the retry');
+  assert.equal(calls.length, 1, 'the failed preparation never reaches fetch');
+});
+
+test('recognize reads a replacement at the same path after preparation settles', async () => {
+  const filepath = await writeTempFile('replacement.png', Buffer.from('first bytes'));
+  const bodies: string[] = [];
+  const { fetchFn } = recordingFetch(call => {
+    bodies.push(String(call.init?.body));
+    return jsonResponse(successBody('ok'));
+  });
+  let reads = 0;
+  const provider = new OpenAICompatibleRecognitionProvider(config(), fetchFn, async file => {
+    reads += 1;
+    return readFile(file);
+  });
+
+  await provider.recognize(request({ filepath }));
+  await writeFile(filepath, Buffer.from('second bytes'));
+  await provider.recognize(request({ filepath }));
+
+  assert.equal(reads, 2, 'settled preparation is not retained by canonical path');
+  assert.match(bodies[0] ?? '', /Zmlyc3QgYnl0ZXM/u);
+  assert.match(bodies[1] ?? '', /c2Vjb25kIGJ5dGVz/u);
+}); // End R4 coalescing regression coverage.
+

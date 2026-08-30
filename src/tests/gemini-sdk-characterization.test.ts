@@ -39,7 +39,7 @@ interface ErrorBody {
     code: number;
     message: string;
     status: string;
-    details?: Array<Record<string, string>>;
+    details?: Record<string, string>[];
   };
 }
 

@@ -111,7 +111,7 @@ test('present-empty routes and simultaneous list plus canonical single setting f
 test('model and provider-label identifiers enforce scalar limits and reject Cc/Cf characters', async () => {
   const exact200 = '😀'.repeat(200);
   const config = await loadGemini(geminiEnvironment({ GEMINI_MODELS: `${exact200},valid` }));
-  assert.equal([...config.recovery.modelRoute[0]!].length, 200);
+  assert.equal([...config.recovery.modelRoute[0]].length, 200);
 
   for (const hostile of [
     '😀'.repeat(201), `bad\u0000model`, `bad\u0085model`, `bad\u200Emodel`,

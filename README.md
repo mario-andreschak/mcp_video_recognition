@@ -1,6 +1,15 @@
+<!--
+status: active
+phase: docs-clarification
+sprint: docs-realignment
+last_modified: 2026-08-22
+agent_notes: "Clarified recursive ALLOWED_MEDIA_ROOTS directory containment and parent folder usage."
+insights: "Default Gemini model is gemini-3.5-flash. OPENAI_COMPATIBLE_MODEL has no default. Parallel inference is opt-in via PARALLEL_PROMPTS. It runs at most two variants at the same time across eight fixed perspectives. ALLOWED_MEDIA_ROOTS containment is recursive over subdirectories."
+-->
+
 # MCP Video Recognition Server
 
-An MCP server that describes images, transcribes audio, and summarizes video from local files. It uses Google Gemini by default, or any OpenAI-compatible endpoint such as OpenRouter.
+An MCP server that describes images, transcribes audio, and summarizes video from local files. It talks to Google Gemini by default, or to any OpenAI-compatible endpoint such as OpenRouter.
 
 <a href="https://glama.ai/mcp/servers/@mario-andreschak/mcp_video_recognition">
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@mario-andreschak/mcp_video_recognition/badge" alt="Video Recognition Server MCP server" />
@@ -11,8 +20,9 @@ An MCP server that describes images, transcribes audio, and summarizes video fro
 - Pick your provider: Google Gemini (default) or an OpenAI-compatible endpoint
 - Three MCP tools for local images, audio, and video
 - Optional Gemini model fallback, plus a final OpenAI-compatible backup
+- Opt-in multi-perspective parallel inference via `PARALLEL_PROMPTS` (see the [Configuration Reference](docs/CONFIGURATION.md#parallel-prompts-and-merging-methods))
 
-Model support varies. Choosing the OpenAI-compatible provider does not mean every endpoint or model handles every media type, and the server never substitutes a model or provider for you.
+Model support varies by provider. Picking the OpenAI-compatible provider does not mean every endpoint or model handles every media type. And the server never swaps in a different model or provider on its own.
 
 ## Prerequisites
 
@@ -50,7 +60,7 @@ Add the server to your MCP client config and point it at the built `dist/index.j
 
 On Windows, use forward slashes or doubled backslashes (`\\`) in the path. Save the file and reconnect your MCP client.
 
-For OpenRouter or another OpenAI-compatible endpoint, set `RECOGNITION_PROVIDER=openai-compatible` plus its variables. See [Configuration](docs/CONFIGURATION.md) for a ready-made example.
+For OpenRouter or another OpenAI-compatible endpoint, set `RECOGNITION_PROVIDER=openai-compatible` and fill in its variables. [Configuration](docs/CONFIGURATION.md) has a ready-made example.
 
 <details>
 <summary>Other install options (FLUJO)</summary>
@@ -65,7 +75,7 @@ With [FLUJO](https://github.com/mario-andreschak/FLUJO/):
 
 ## Configuration
 
-The server reads environment variables. The most common ones:
+The server reads environment variables. These are the ones you'll touch most:
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -74,22 +84,20 @@ The server reads environment variables. The most common ones:
 | `GEMINI_MODEL` | `gemini-3.5-flash` | Gemini model to use |
 | `OPENAI_COMPATIBLE_API_KEY` | none | OpenAI-compatible API key |
 | `OPENAI_COMPATIBLE_BASE_URL` | none | Endpoint base URL |
-| `OPENAI_COMPATIBLE_MODEL` | xiaomi/mimo-v2.5 | Model to use |
+| `OPENAI_COMPATIBLE_MODEL` | none | Model to use |
 | `ALLOWED_MEDIA_ROOTS` | none | Media directories for the OpenAI-compatible provider and Gemini backup |
 
-Bad values stop startup; they are not fixed silently.
+A bad value stops startup. Nothing gets fixed silently.
 
-For the full variable list, validation rules, the OpenRouter example, and supported media types, see the **[Configuration Reference](docs/CONFIGURATION.md)**.
-
-For Gemini model fallback and the final backup, see the **[Provider Recovery Reference](docs/RECOVERY.md)**.
+The **[Configuration Reference](docs/CONFIGURATION.md)** has the full variable list, validation rules, an OpenRouter example, and the supported media types. For Gemini model fallback and the final backup, read the **[Provider Recovery Reference](docs/RECOVERY.md)**.
 
 ## Tools
 
-The server provides three MCP tools. Each takes a local `filepath`, an optional `prompt` (default `Describe this content`), and an optional `modelname` override.
+You get three MCP tools. Each takes a local `filepath`, an optional `prompt` (default `Describe this content`), and an optional `modelname` override.
 
-- `image_recognition` — describe an image
-- `audio_recognition` — transcribe or describe audio
-- `video_recognition` — describe a video
+- `image_recognition` - describe an image
+- `audio_recognition` - transcribe or describe audio
+- `video_recognition` - describe a video
 
 Example:
 
@@ -105,11 +113,11 @@ Example:
 
 ## Security
 
-- HTTPS is required by default. Plain HTTP is allowed only for an explicitly enabled local endpoint.
-- The OpenAI-compatible provider and Gemini backup read media only from directories you list in `ALLOWED_MEDIA_ROOTS`.
-- Keys stay in the process environment. Do not commit real keys.
+- HTTPS is required by default. Plain HTTP only works for a local endpoint you explicitly enable.
+- The OpenAI-compatible provider and the Gemini backup read media only from directories listed in `ALLOWED_MEDIA_ROOTS`. Containment is recursive, so specifying a parent folder (e.g. `C:\Projects` or `${workspaceFolder}`) covers all repositories, subfolders, and media files inside it.
+- Keys stay in the process environment. Don't commit real keys.
 
-For endpoint rules, resource limits, and incident response, see the **[Security Reference](docs/SECURITY.md)**.
+The **[Security Reference](docs/SECURITY.md)** covers endpoint rules, resource limits, and incident response.
 
 ## Development
 

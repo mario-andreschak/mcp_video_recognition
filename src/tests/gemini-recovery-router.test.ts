@@ -251,7 +251,7 @@ test('diagnostic events follow execution order with contiguous started attempts 
     'cooldown-skipped', 'attempt-started', 'attempt-classified',
     'attempt-started', 'fallback-succeeded'
   ]);
-  assert.equal('attempt' in events[0]!, false);
+  assert.equal('attempt' in events[0], false);
   assert.deepEqual(
     events.filter(event => event.kind === 'attempt-started').map(event => event.attempt),
     [1, 2]
@@ -312,7 +312,7 @@ test('terminal formatter rejects hostile identifiers and bounds valid closed tup
     provider: 'gemini',
     model: `${'😀'.repeat(190)}"\\-model-${index}`,
     attempt: index + 1,
-    category: (['rate-limit', 'timeout', 'temporary-service', 'malformed-response'] as const)[index % 4]!
+    category: (['rate-limit', 'timeout', 'temporary-service', 'malformed-response'] as const)[index % 4] ?? 'temporary-service'
   }));
   const output = formatGeminiTerminalMessage('route-exhausted', attempts);
   assert.equal(output, formatGeminiTerminalMessage('route-exhausted', attempts));

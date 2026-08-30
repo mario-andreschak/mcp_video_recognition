@@ -88,7 +88,7 @@ const isBidiControl = (codePoint: number): boolean =>
   || (codePoint >= 0x2066 && codePoint <= 0x2069);
 
 export const escapedDiagnosticUnits = (value: string): readonly string[] => [...value].map(character => {
-  const codePoint = character.codePointAt(0)!;
+  const codePoint = character.codePointAt(0) ?? 0;
   const isC0C1 = codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
   if (isC0C1 || isBidiControl(codePoint)) {
     return `\\u${codePoint.toString(16).toUpperCase().padStart(4, '0')}`;
@@ -135,7 +135,7 @@ export const sanitizeOperatorMessage = (
   const replacements: readonly [RegExp, string][] = [
     [/\b(?:api[_-]?key|credential|password|secret|token)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/giu, REDACTION],
     [/\bauthorization\s*:\s*[^\r\n]+/giu, REDACTION],
-    [/\bbearer\s+[A-Za-z0-9._~+\/-]+=*/giu, REDACTION],
+    [/\bbearer\s+[A-Za-z0-9._~+/-]+=*/giu, REDACTION],
     [/data:[^\s,;]+(?:;base64)?,[A-Za-z0-9+/=_-]+/giu, REDACTION],
     [/\bprompt\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\r\n;]+)/giu, REDACTION],
     [/(?:file:\/\/\/[^\s"']+|[A-Za-z]:[\\/][^\s"']+|(?:^|\s)\/(?:[^\s/]+\/)*[^\s"']+)/gmu, REDACTION],

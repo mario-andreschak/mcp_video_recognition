@@ -23,7 +23,7 @@ interface CooldownEntry {
 }
 
 export const createProviderModelCooldownStore = (
-  capacity: number = 64
+  capacity = 64
 ): ProviderModelCooldownStore => {
   const maximumEntries = Number.isSafeInteger(capacity) && capacity > 0
     ? Math.min(capacity, 64)

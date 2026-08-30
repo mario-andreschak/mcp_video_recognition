@@ -127,7 +127,7 @@ export const normalizeGeminiGenerationFailure = (cause: unknown): NormalizedGemi
 
   let body: unknown;
   try {
-    body = JSON.parse(match[3]!);
+    body = JSON.parse(match[3]);
   } catch {
     return malformed(cause);
   }

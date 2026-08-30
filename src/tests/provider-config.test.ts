@@ -2,9 +2,9 @@
  * status: active
  * phase: change-b-group-1-configuration
  * sprint: gemini-model-fallback-and-rate-limit-recovery
- * last_modified: 2026-08-07
- * agent_notes: "Compatibility matrix updated for the nested Gemini recovery defaults and deliberate GEMINI_MODELS unlock."
- * insights: "The loader still validates only selected configuration; detailed Change B recovery coverage lives in gemini-recovery-config.test.ts."
+ * last_modified: 2026-08-21
+ * agent_notes: "Tests provider selection, strict environment parsing, and Change C parallel prompt configuration."
+ * insights: "Configuration loader validates selected-provider variables only and keeps provider construction out of configuration parsing. PARALLEL_PROMPTS treats an empty value as its default and accepts bounded decimal integers."
  */
 
 import assert from 'node:assert/strict';
@@ -15,6 +15,7 @@ import path from 'node:path';
 import {
   DEFAULT_GEMINI_MODEL,
   loadRecognitionProviderConfig,
+  parseParallelPrompts,
   type ProviderEnvironment
 } from '../services/provider-config.js';
 
@@ -356,3 +357,22 @@ test('loader remains standalone and contains no provider construction, media rea
   assert.doesNotMatch(source, /requested(?:File|Path)|isPathContained|containsPath/u);
   assert.doesNotMatch(source, /from ['"]\.\/gemini/u);
 });
+
+test('parseParallelPrompts returns 1 if missing', () => {
+  assert.strictEqual(parseParallelPrompts({}), 1);
+  assert.strictEqual(parseParallelPrompts({ PARALLEL_PROMPTS: '' }), 1);
+});
+
+test('parseParallelPrompts parses valid integers', () => {
+  assert.strictEqual(parseParallelPrompts({ PARALLEL_PROMPTS: '1' }), 1);
+  assert.strictEqual(parseParallelPrompts({ PARALLEL_PROMPTS: '4' }), 4);
+  assert.strictEqual(parseParallelPrompts({ PARALLEL_PROMPTS: '8' }), 8);
+});
+
+test('parseParallelPrompts rejects invalid or out of bounds', () => {
+  assert.throws(() => parseParallelPrompts({ PARALLEL_PROMPTS: '0' }));
+  assert.throws(() => parseParallelPrompts({ PARALLEL_PROMPTS: '9' }));
+  assert.throws(() => parseParallelPrompts({ PARALLEL_PROMPTS: '2.5' }));
+  assert.throws(() => parseParallelPrompts({ PARALLEL_PROMPTS: 'abc' }));
+}); // End parallel prompt parsing regression coverage.
+

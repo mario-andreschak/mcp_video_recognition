@@ -435,7 +435,13 @@ const parseProviderResponse = async (response: Response, text: string): Promise<
   });
 };
 
-const readFileSafely = async (filepath: string, maxBytes: number): Promise<string> => {
+type ReadMediaFile = (filepath: string) => Promise<Buffer>;
+
+const readFileSafely = async (
+  filepath: string,
+  maxBytes: number,
+  readMediaFile: ReadMediaFile = readFile
+): Promise<string> => {
   let stats;
   try {
     stats = await stat(filepath);
@@ -446,7 +452,7 @@ const readFileSafely = async (filepath: string, maxBytes: number): Promise<strin
     throw mappedFailure({ category: 'unsupported-media' });
   }
   try {
-    const buffer = await readFile(filepath);
+    const buffer = await readMediaFile(filepath);
     return buffer.toString('base64');
   } catch (cause) {
     throw mappedFailure({ category: 'unsupported-media', cause });
@@ -454,10 +460,31 @@ const readFileSafely = async (filepath: string, maxBytes: number): Promise<strin
 };
 
 export class OpenAICompatibleRecognitionProvider implements RecognitionProvider {
+  private inFlightReads = new Map<string, Promise<string>>();
+
   constructor(
     private readonly config: OpenAICompatibleProviderConfig,
-    private readonly fetchFn: typeof globalThis.fetch = globalThis.fetch
+    private readonly fetchFn: typeof globalThis.fetch = globalThis.fetch,
+    private readonly readMediaFile: ReadMediaFile = readFile
   ) {}
+
+  private async readCanonicalFile(canonicalFilepath: string): Promise<string> {
+    const existing = this.inFlightReads.get(canonicalFilepath);
+    if (existing) {
+      return existing;
+    }
+    const promise = readFileSafely(
+      canonicalFilepath,
+      this.config.maxInlineMediaBytes,
+      this.readMediaFile
+    );
+    this.inFlightReads.set(canonicalFilepath, promise);
+    try {
+      return await promise;
+    } finally {
+      this.inFlightReads.delete(canonicalFilepath);
+    }
+  }
 
   async recognize(
     request: RecognitionRequest,
@@ -494,7 +521,7 @@ export class OpenAICompatibleRecognitionProvider implements RecognitionProvider 
     const mediaType = resolveMediaType(request.mediaKind, canonicalFilepath);
 
     // 7. File metadata size guard, then read+base64 the canonical path.
-    const base64 = await readFileSafely(canonicalFilepath, this.config.maxInlineMediaBytes);
+    const base64 = await this.readCanonicalFile(canonicalFilepath);
     const mediaPart = buildMediaPart(request.mediaKind, mediaType, base64);
 
     // 8. Build the exact text-first body.

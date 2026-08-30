@@ -136,6 +136,7 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
     const sleep = this.runtime.sleep ?? (async (ms: number) => {
       await new Promise<void>(resolve => setTimeout(resolve, ms));
     });
+    const backupProvider = this.runtime.backupProvider;
     const outcome = await runPreparedGeminiRoute({
       mediaKind,
       candidates: pin === undefined ? this.config.recovery.modelRoute : [requestedModel],
@@ -151,12 +152,12 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
       sleep,
       cooldowns: this.cooldowns,
       diagnosticSink: this.runtime.diagnosticSink,
-      ...(this.config.recovery.backup.enabled && this.runtime.backupProvider !== undefined
+      ...(this.config.recovery.backup.enabled && backupProvider !== undefined
         ? {
             backup: {
               provider: this.config.recovery.backup.providerConfig.providerLabel,
               model: this.config.recovery.backup.providerConfig.model,
-              invoke: () => this.runtime.backupProvider!.recognize({
+              invoke: () => backupProvider.recognize({
                 filepath: canonicalFilepath,
                 prompt: request.prompt,
                 mediaKind

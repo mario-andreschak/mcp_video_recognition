@@ -10,7 +10,30 @@
 import { realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash';
+export const PERSPECTIVES = [
+  { label: 'Baseline', suffix: '' },
+  { label: 'Visual Details', suffix: ' Focus on fine-grained visual details, lighting, and object positioning.' },
+  { label: 'Text & OCR', suffix: ' Focus on extracting and transcribing any visible text or signage.' },
+  { label: 'Temporal Sequence', suffix: ' Focus on the chronological order of events and movement.' },
+  { label: 'Technical Composition', suffix: ' Focus on technical composition: camera angles and focus.' },
+  { label: 'Contextual Analysis', suffix: ' Focus on contextual analysis: environment, setting, and tone.' },
+  { label: 'Entity Counting', suffix: ' Focus on counting and categorizing all distinct objects observed.' },
+  { label: 'Key Takeaways', suffix: ' Focus on summarizing the highest-signal key takeaways concisely.' }
+] as const;
+
+export function parseParallelPrompts(env: NodeJS.ProcessEnv | ProviderEnvironment): number {
+  const raw = env.PARALLEL_PROMPTS;
+  if (!raw) return 1;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`PARALLEL_PROMPTS must be an integer between 1 and 8 (received: "${raw}")`);
+  }
+  const parsed = Number(raw);
+  if (parsed < 1 || parsed > 8) {
+    throw new Error(`PARALLEL_PROMPTS must be an integer between 1 and 8 (received: "${raw}")`);
+  }
+  return parsed;
+}
 
 export type GeminiBackupConfig =
   | { readonly enabled: false }
@@ -360,7 +383,7 @@ const loadGeminiConfig = async (env: ProviderEnvironment): Promise<GeminiProvide
   return {
     provider: 'gemini',
     apiKey: requiredValue(env, 'GOOGLE_API_KEY'),
-    model: modelRoute[0]!,
+    model: modelRoute[0],
     ...(modelAllowlist === undefined ? {} : { modelAllowlist }),
     recovery: {
       modelRoute,
