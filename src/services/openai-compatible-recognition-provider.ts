@@ -94,7 +94,12 @@ export const canonicalizeContainedFile = async (
     });
   }
   for (const root of roots) {
-    if (isCanonicalChild(root, canonical)) return canonical;
+    try {
+      // Resolve both sides: Windows short names and directory aliases otherwise
+      // compare unequal even when they identify the same allowed directory.
+      const canonicalRoot = await realpath(root);
+      if (isCanonicalChild(canonicalRoot, canonical)) return canonical;
+    } catch { /* An unavailable root grants no access. */ }
   }
   throw createProviderFailure({
     provider: 'openai-compatible',

@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -513,11 +513,11 @@ test('enabled backup receives a fresh canonical request without Gemini model and
       { sleep: async () => undefined, backupProvider }
     ).recognize(request({ filepath, prompt: 'exact prompt' }), { signal: controller.signal });
     assert.deepEqual(result, { text: ' exact backup result ' });
-    assert.deepEqual(calls.uploadedPaths, [filepath]);
+    assert.deepEqual(calls.uploadedPaths, [await realpath(filepath)]);
     assert.equal(calls.generations.length, 1);
     assert.equal(backupCalls.length, 1);
     assert.deepEqual(backupCalls[0]?.request, {
-      filepath,
+      filepath: await realpath(filepath),
       prompt: 'exact prompt',
       mediaKind: 'image'
     });
