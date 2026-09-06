@@ -15,6 +15,8 @@ An MCP server that describes images, transcribes audio, and summarizes video fro
   <img width="380" height="200" src="https://glama.ai/mcp/servers/@mario-andreschak/mcp_video_recognition/badge" alt="Video Recognition Server MCP server" />
 </a>
 
+Version 2 supports MCP 2026-07-28 and deliberate 2025 compatibility. Read the [migration and operating limits](docs/2026-MIGRATION.md) before upgrading HTTP.
+
 ## Features
 
 - Pick your provider: Google Gemini (default) or an OpenAI-compatible endpoint
@@ -26,7 +28,7 @@ Model support varies by provider. Picking the OpenAI-compatible provider does no
 
 ## Prerequisites
 
-- Node.js **18.0.0 or later**
+- Node.js **22 or later**
 - An API key for your provider:
   - Gemini: `GOOGLE_API_KEY`
   - OpenAI-compatible: `OPENAI_COMPATIBLE_API_KEY`
@@ -34,9 +36,9 @@ Model support varies by provider. Picking the OpenAI-compatible provider does no
 ## Install
 
 ```bash
-git clone https://github.com/yourusername/mcp-video-recognition.git
-cd mcp-video-recognition
-npm install
+git clone https://github.com/mario-andreschak/mcp_video_recognition.git
+cd mcp_video_recognition
+npm ci
 npm run build
 ```
 
@@ -64,7 +66,7 @@ For OpenRouter or another OpenAI-compatible endpoint, set `RECOGNITION_PROVIDER=
 
 ## Standalone Client
 
-The repository includes a client that builds the project, spawns the server over stdio, performs MCP initialization, and lists the tools. It loads `.env` from the repository root when that file exists; already-set process environment variables take precedence.
+The repository includes a client that builds the project, spawns the server over stdio, negotiates modern or legacy MCP, and lists the tools. It loads `.env` from the repository root when that file exists; already-set process environment variables take precedence.
 
 ```bash
 # Connect and list tools
@@ -105,7 +107,7 @@ The server reads environment variables. These are the ones you'll touch most:
 | `OPENAI_COMPATIBLE_API_KEY` | none | OpenAI-compatible API key |
 | `OPENAI_COMPATIBLE_BASE_URL` | none | Endpoint base URL |
 | `OPENAI_COMPATIBLE_MODEL` | none | Model to use |
-| `ALLOWED_MEDIA_ROOTS` | none | Media directories for the OpenAI-compatible provider and Gemini backup |
+| `ALLOWED_MEDIA_ROOTS` | none | Required for HTTP and OpenAI-compatible; optional Gemini stdio confinement |
 | `TRANSPORT_TYPE` | `stdio` | `stdio` or `streamable-http`; `sse` is a legacy alias |
 | `MCP_HOST` | `127.0.0.1` | Bind address for Streamable HTTP |
 | `PORT` | `3000` | Bind port for Streamable HTTP |
@@ -138,7 +140,7 @@ Example:
 ## Security
 
 - HTTPS is required by default. Plain HTTP only works for a local endpoint you explicitly enable.
-- The OpenAI-compatible provider and the Gemini backup read media only from directories listed in `ALLOWED_MEDIA_ROOTS`. Containment is recursive, so specifying a parent folder (e.g. `C:\Projects` or `${workspaceFolder}`) covers all repositories, subfolders, and media files inside it.
+- All HTTP calls and the OpenAI-compatible provider read media only from directories listed in `ALLOWED_MEDIA_ROOTS`. Containment is recursive, so specifying a parent folder (e.g. `C:\Projects` or `${workspaceFolder}`) covers all repositories, subfolders, and media files inside it.
 - Keys stay in the process environment. Don't commit real keys.
 
 The **[Security Reference](docs/SECURITY.md)** covers endpoint rules, resource limits, and incident response.
@@ -157,10 +159,12 @@ For HTTP, start the server separately:
 ```powershell
 $env:GOOGLE_API_KEY = "your_google_api_key"
 $env:TRANSPORT_TYPE = "streamable-http"
+$env:MCP_AUTH_TOKEN = "replace-with-a-random-token-of-at-least-32-characters"
+$env:ALLOWED_MEDIA_ROOTS = "C:/media"
 npm start
 ```
 
-Then select **Streamable HTTP** in Inspector and connect to `http://127.0.0.1:3000/mcp`. Do not select legacy SSE: the backwards-compatible `TRANSPORT_TYPE=sse` spelling still starts a Streamable HTTP endpoint.
+Set the Authorization header to Bearer followed by MCP_AUTH_TOKEN. Then select **Streamable HTTP** in Inspector and connect to `http://127.0.0.1:3000/mcp`. Do not select legacy SSE: the backwards-compatible `TRANSPORT_TYPE=sse` spelling still starts a Streamable HTTP endpoint.
 
 Listing tools only proves the MCP handshake succeeded. It does not contact the recognition provider or read a media file. A later call can still fail because the key, model, network, or `filepath` is invalid. The path must identify a file visible to the spawned server process; paths from a different container or host will not work.
 

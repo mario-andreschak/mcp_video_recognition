@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
@@ -227,7 +227,6 @@ const run = async (): Promise<void> => {
         name: options.tool,
         arguments: options.arguments
       },
-      undefined,
       {
         timeout: options.timeoutMs,
         maxTotalTimeout: options.timeoutMs

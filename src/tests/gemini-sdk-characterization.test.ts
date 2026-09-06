@@ -1,375 +1,98 @@
-/**
- * status: active
- * phase: change-b-phase-0-task-0.3
- * sprint: sdk-runtime-evidence
- * last_modified: 2026-08-07
- * agent_notes: "Deterministic, credential-free characterization of installed @google/genai; rerun after any SDK resolution change."
- * insights: "v0.9.0 wraps fetch failures without cause, ignores caller signal fields, and owns timeout AbortControllers."
- */
-
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import { test } from 'node:test';
-import * as genaiNamespace from '@google/genai';
-import { GenerateContentResponse, GoogleGenAI, type HttpOptions } from '@google/genai';
+import { GoogleGenAI, ApiError } from '@google/genai';
+import { normalizeGeminiGenerationFailure } from '../services/gemini-error-classifier.js';
+import { GeminiService } from '../services/gemini.js';
 
-const PACKAGE_JSON_PATH = path.resolve(
-  process.cwd(),
-  'node_modules/@google/genai/package.json'
-);
-const NODE_BUNDLE_PATH = path.resolve(
-  process.cwd(),
-  'node_modules/@google/genai/dist/node/index.js'
-);
-const EXPECTED_VERSION = '0.9.0';
-const OVERSIZED_PAYLOAD_LENGTH = 128 * 1024;
-
-interface ErrorRecord {
-  name?: unknown;
-  message?: unknown;
-  cause?: unknown;
-  status?: unknown;
-  code?: unknown;
-  errorDetails?: unknown;
+async function withFetch<T>(fetcher: typeof fetch, work: () => Promise<T>) {
+  const original = globalThis.fetch;
+  globalThis.fetch = fetcher;
+  try { return await work(); } finally { globalThis.fetch = original; }
 }
-
-interface ErrorBody {
-  error: {
-    code: number;
-    message: string;
-    status: string;
-    details?: Record<string, string>[];
-  };
-}
-
-const client = (): GoogleGenAI => new GoogleGenAI({ apiKey: 'fixture-api-key' });
-
-const generate = (
-  ai: GoogleGenAI,
-  httpOptions?: HttpOptions
-): Promise<GenerateContentResponse> => ai.models.generateContent({
-  model: 'fixture-model',
-  contents: 'fixture prompt',
-  config: httpOptions === undefined ? undefined : { httpOptions }
-});
-
-const captureThrow = async (operation: () => Promise<unknown>): Promise<ErrorRecord> => {
-  try {
-    await operation();
-    assert.fail('expected operation to throw');
-  } catch (error) {
-    assert.equal(error instanceof Error, true);
-    return error as ErrorRecord;
-  }
-};
-
-const withFetch = async <T>(
-  fakeFetch: typeof globalThis.fetch,
-  operation: () => Promise<T>
-): Promise<T> => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = fakeFetch;
-  try {
-    return await operation();
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-};
-
-const jsonErrorResponse = (status: number, statusText: string, body: ErrorBody): Response =>
-  new Response(JSON.stringify(body), {
-    status,
-    statusText,
-    headers: { 'content-type': 'application/json' }
-  });
-
-const assertSdkEnvelope = (
-  error: ErrorRecord,
-  expectedName: 'ClientError' | 'ServerError',
-  status: number,
-  statusText: string,
-  body: ErrorBody
-): void => {
-  const prefix = `got status: ${status} ${statusText}. `;
-  assert.equal(error.name, expectedName);
-  assert.equal(error.message, `${prefix}${JSON.stringify(body)}`);
-  assert.equal('status' in error, false);
-  assert.equal('code' in error, false);
-  assert.equal('errorDetails' in error, false);
-
-  const message = String(error.message);
-  assert.equal(message.startsWith(prefix), true);
-  const bodyBoundary = message.slice(prefix.length);
-  assert.deepEqual(JSON.parse(bodyBoundary), body);
-  assert.equal(`${prefix}${bodyBoundary}`, message);
-};
-
-test('resolved package and public namespace are locked to installed @google/genai 0.9.0', async () => {
-  const packageJson = JSON.parse(await readFile(PACKAGE_JSON_PATH, 'utf8')) as {
-    version: string;
-  };
-  const source = await readFile(NODE_BUNDLE_PATH, 'utf8');
-
-  assert.equal(packageJson.version, EXPECTED_VERSION);
-  const stableNamespaceKeys = Object.keys(genaiNamespace)
-    .filter(key => key !== 'default' && key !== 'module.exports');
-  assert.equal(stableNamespaceKeys.length, 68);
-  assert.equal('GoogleGenAI' in genaiNamespace, true);
-  assert.equal('ClientError' in genaiNamespace, false);
-  assert.equal('ServerError' in genaiNamespace, false);
-  assert.match(source, /class ClientError extends Error/u);
-  assert.match(source, /this\.name = 'ClientError'/u);
-  assert.match(source, /class ServerError extends Error/u);
-  assert.match(source, /this\.name = 'ServerError'/u);
-  assert.doesNotMatch(source, /exports\.ClientError\s*=/u);
-  assert.doesNotMatch(source, /exports\.ServerError\s*=/u);
-  console.log(`@google/genai resolved version: ${packageJson.version}`);
-});
-
-test('429 is one ClientError envelope with typed body fields and one request', async () => {
-  const body: ErrorBody = {
-    error: {
-      code: 429,
-      message: 'fixture quota exhausted',
-      status: 'RESOURCE_EXHAUSTED',
-      details: [{
-        '@type': 'type.googleapis.com/google.rpc.RetryInfo',
-        retryDelay: '1.250s'
-      }]
-    }
-  };
-  let requests = 0;
-  const error = await withFetch(async () => {
-    requests += 1;
-    return jsonErrorResponse(429, 'Too Many Requests', body);
-  }, () => captureThrow(() => generate(client())));
-
-  assert.equal(requests, 1);
-  assertSdkEnvelope(error, 'ClientError', 429, 'Too Many Requests', body);
-  assert.equal(typeof body.error.code, 'number');
-  assert.equal(typeof body.error.status, 'string');
-  assert.equal(typeof body.error.message, 'string');
-  assert.equal(typeof body.error.details?.[0]?.retryDelay, 'string');
-});
-
-test('503 is one ServerError envelope with typed body fields and one request', async () => {
-  const body: ErrorBody = {
-    error: {
-      code: 503,
-      message: 'fixture service unavailable',
-      status: 'UNAVAILABLE'
-    }
-  };
-  let requests = 0;
-  const error = await withFetch(async () => {
-    requests += 1;
-    return jsonErrorResponse(503, 'Service Unavailable', body);
-  }, () => captureThrow(() => generate(client())));
-
-  assert.equal(requests, 1);
-  assertSdkEnvelope(error, 'ServerError', 503, 'Service Unavailable', body);
-});
-
-test('403 remains a ClientError even when its body contains retry-looking evidence', async () => {
-  const body: ErrorBody = {
-    error: {
-      code: 403,
-      message: 'quota retry billing fixture',
-      status: 'RESOURCE_EXHAUSTED',
-      details: [{ retryDelay: '2s' }]
-    }
-  };
-  let requests = 0;
-  const error = await withFetch(async () => {
-    requests += 1;
-    return jsonErrorResponse(403, 'Forbidden', body);
-  }, () => captureThrow(() => generate(client())));
-
-  assert.equal(requests, 1);
-  assertSdkEnvelope(error, 'ClientError', 403, 'Forbidden', body);
-});
-
-test('malformed JSON propagates SyntaxError while non-JSON content is replaced by a synthetic envelope', async () => {
-  const malformedJson = await withFetch(
-    async () => new Response('not-json', {
-      status: 429,
-      statusText: 'Too Many Requests',
-      headers: { 'content-type': 'application/json' }
-    }),
-    () => captureThrow(() => generate(client()))
-  );
-  assert.equal(malformedJson.name, 'SyntaxError');
-  assert.equal(String(malformedJson.message).startsWith('Unexpected token'), true);
-  assert.equal(String(malformedJson.message).includes('got status:'), false);
-
-  const syntheticBody: ErrorBody = {
-    error: {
-      message: 'exception parsing response',
-      code: 429,
-      status: 'Too Many Requests'
-    }
-  };
-  const nonJsonContent = await withFetch(
-    async () => new Response('raw provider text is discarded', {
-      status: 429,
-      statusText: 'Too Many Requests',
-      headers: { 'content-type': 'text/plain' }
-    }),
-    () => captureThrow(() => generate(client()))
-  );
-  assertSdkEnvelope(
-    nonJsonContent,
-    'ClientError',
-    429,
-    'Too Many Requests',
-    syntheticBody
-  );
-  assert.equal(String(nonJsonContent.message).includes('raw provider text'), false);
-});
-
-test('oversized JSON body is embedded completely and verbatim with no SDK extraction limit', async () => {
-  const marker = 'x'.repeat(OVERSIZED_PAYLOAD_LENGTH);
-  const body: ErrorBody = {
-    error: {
-      code: 429,
-      message: marker,
-      status: 'RESOURCE_EXHAUSTED'
-    }
-  };
-  const error = await withFetch(
-    async () => jsonErrorResponse(429, 'Too Many Requests', body),
-    () => captureThrow(() => generate(client()))
-  );
-
-  assertSdkEnvelope(error, 'ClientError', 429, 'Too Many Requests', body);
-  assert.equal(String(error.message).includes(marker), true);
-  assert.equal(
-    String(error.message).length,
-    'got status: 429 Too Many Requests. '.length + JSON.stringify(body).length
-  );
-});
-
-test('transport codes in fetch rejection causes are erased by the SDK wrapper', async () => {
-  for (const code of ['ETIMEDOUT', 'ECONNRESET', 'EAI_AGAIN'] as const) {
-    const systemError = Object.assign(new Error('fixture system failure'), { code });
-    const fetchFailure = new TypeError('fetch failed', { cause: systemError });
-    const error = await withFetch(
-      async () => Promise.reject(fetchFailure),
-      () => captureThrow(() => generate(client()))
-    );
-
-    assert.equal(error.name, 'Error');
-    assert.equal(error.message, 'exception TypeError: fetch failed sending request');
-    assert.equal(error.cause, undefined);
-    assert.equal(error.code, undefined);
-    assert.equal((error.cause as ErrorRecord | undefined)?.code, undefined);
-    assert.equal(
-      ((error.cause as ErrorRecord | undefined)?.cause as ErrorRecord | undefined)?.code,
-      undefined
-    );
-    assert.equal(String(error.message).includes(code), false);
-  }
-});
-
-test('caller AbortSignal is not accepted or threaded to fetch by generateContent', async () => {
-  const callerController = new AbortController();
-  let capturedSignal: AbortSignal | null | undefined;
-  let releaseFetch!: (response: Response) => void;
-  let fetchStarted!: () => void;
-  const started = new Promise<void>(resolve => { fetchStarted = resolve; });
-  const response = new Promise<Response>(resolve => { releaseFetch = resolve; });
-  const unsupportedOptions = {
-    signal: callerController.signal
-  } as HttpOptions;
-
-  const operation = withFetch(async (_input, init) => {
-    capturedSignal = init?.signal;
-    fetchStarted();
-    return response;
-  }, () => generate(client(), unsupportedOptions));
-
-  await started;
-  callerController.abort();
-  assert.equal(callerController.signal.aborted, true);
-  assert.equal(capturedSignal, undefined);
-  releaseFetch(new Response('{}', {
-    status: 200,
-    headers: { 'content-type': 'application/json' }
-  }));
-  await operation;
-});
-
-test('SDK timeout creates its own signal and wraps fetch AbortError without structured identity', async () => {
-  let capturedSignal: AbortSignal | null | undefined;
-  const error = await withFetch(async (_input, init) => {
-    capturedSignal = init?.signal;
-    assert.notEqual(capturedSignal, undefined);
-    return new Promise<Response>((_resolve, reject) => {
-      capturedSignal?.addEventListener('abort', () => {
-        reject(new DOMException('This operation was aborted', 'AbortError'));
-      }, { once: true });
-    });
-  }, () => captureThrow(() => generate(client(), { timeout: 5 })));
-
-  assert.equal(capturedSignal?.aborted, true);
-  assert.equal(error.name, 'Error');
-  assert.equal(
-    error.message,
-    'exception AbortError: This operation was aborted sending request'
-  );
-  assert.equal(error.cause, undefined);
-  assert.equal(error.code, undefined);
-  assert.equal(error.status, undefined);
-});
-
-test('successful generateContent performs exactly one HTTP request', async () => {
-  let requests = 0;
-  const result = await withFetch(async () => {
-    requests += 1;
-    return new Response('{}', {
-      status: 200,
-      headers: { 'content-type': 'application/json' }
-    });
-  }, () => generate(client()));
-
-  assert.equal(requests, 1);
-  assert.equal(result instanceof GenerateContentResponse, true);
-});
-
-test('files.upload performs exactly two HTTP requests for a one-chunk Blob', async () => {
-  const stages: string[] = [];
-  const uploaded = await withFetch(async input => {
-    const url = String(input);
-    stages.push(url);
-    if (stages.length === 1) {
-      return new Response('{}', {
-        status: 200,
-        headers: {
-          'content-type': 'application/json',
-          'x-goog-upload-url': 'https://upload.fixture/session'
-        }
+for (const [status, category] of [[403, 'permission'], [429, 'rate-limit'], [503, 'temporary-service']] as const) {
+  test('installed Google SDK preserves ' + status + ' for safe recovery without implicit retries', async () => {
+    let calls = 0;
+    await withFetch(async () => {
+      calls++;
+      return Response.json({ error: { code: status, message: 'sensitive upstream details', status: status === 429 ? 'RESOURCE_EXHAUSTED' : 'UNAVAILABLE',
+        details: [{ retryDelay: '1.250s' }] } }, { status });
+    }, async () => {
+      const client = new GoogleGenAI({ apiKey: 'fixture', httpOptions: { retryOptions: { attempts: 1 } } });
+      await assert.rejects(client.models.generateContent({ model: 'fixture-model', contents: 'secret' }), error => {
+        assert.ok(error instanceof ApiError);
+        const normalized = normalizeGeminiGenerationFailure(error);
+        assert.equal(normalized.failure.status, status);
+        assert.equal(normalized.failure.category, category);
+        assert.equal(normalized.failure.retryAfterMs, 1250);
+        assert.doesNotMatch(normalized.failure.safeMessage, /sensitive|secret/u);
+        return true;
       });
-    }
-    return new Response(JSON.stringify({
-      file: {
-        name: 'files/fixture',
-        uri: 'gemini://fixture',
-        mimeType: 'text/plain'
-      }
-    }), {
-      status: 200,
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-upload-status': 'final'
-      }
     });
-  }, () => client().files.upload({
-    file: new Blob(['fixture'], { type: 'text/plain' })
-  }));
-
-  assert.equal(stages.length, 2);
-  assert.match(stages[0] ?? '', /generativelanguage\.googleapis\.com\/upload\/v1beta\/files/u);
-  assert.equal(stages[1], 'https://upload.fixture/session');
-  assert.equal(uploaded.name, 'files/fixture');
+    assert.equal(calls, 1);
+  });
+}
+test('service cancellation reaches actual Google SDK fetch signal and bounds caller completion', async () => {
+  const controller = new AbortController();
+  let observed = false;
+  await withFetch(async (_url, init) => {
+    const signal = init?.signal;
+    assert.ok(signal);
+    queueMicrotask(() => controller.abort());
+    return await new Promise<Response>((_, reject) => {
+      signal.addEventListener('abort', () => { observed = true; reject(signal.reason); }, { once: true });
+    });
+  }, async () => {
+    const service = new GeminiService({ apiKey: 'fixture' }, { requestTimeoutMs: 1000 });
+    await assert.rejects(service.processFileOrThrow({ uri: 'https://example.invalid/file', mimeType: 'image/png' }, 'private', 'fixture', controller.signal));
+    await service.close();
+  });
+  assert.equal(observed, true);
+});
+test('service timeout is independent of a non-cooperative injected SDK', async () => {
+  const client = { models: { generateContent: () => new Promise(() => { /* Settled or intentionally pending fixture. */ }) } } as unknown as GoogleGenAI;
+  const service = new GeminiService({ apiKey: 'fixture' }, { requestTimeoutMs: 30 }, client);
+  const keepAlive = setTimeout(() => { /* Settled or intentionally pending fixture. */ }, 1000);
+  try {
+    await assert.rejects(service.processFileOrThrow({ uri: 'fixture', mimeType: 'image/png' }, 'private', 'fixture'),
+      error => (error as { code?: string }).code === 'ADAPTER_TIMEOUT');
+  } finally { clearTimeout(keepAlive); await service.close(); }
+});
+test('Files REST upload and actual Google SDK poll, generation and deletion work over mocked HTTP', async () => {
+  const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const path = await import('node:path');
+  const root = await mkdtemp(path.join(tmpdir(), 'genai-wire-'));
+  const filepath = path.join(root, 'sensitive-video.mp4');
+  await writeFile(filepath, 'media-bytes');
+  const calls: string[] = [];
+  const file = { name: 'files/owned', uri: 'https://generativelanguage.googleapis.com/v1beta/files/owned', mimeType: 'video/mp4', state: 'ACTIVE' };
+  try {
+    await withFetch(async (input, init) => {
+      const url = new URL(String(input));
+      calls.push((init?.method ?? 'GET') + ' ' + url.pathname);
+      assert.equal(url.hostname, 'generativelanguage.googleapis.com');
+      if (url.pathname === '/upload/v1beta/files') {
+        assert.doesNotMatch(String(init?.body), /sensitive-video/u);
+        return new Response('', { headers: { 'x-goog-upload-url': 'https://generativelanguage.googleapis.com/upload/session' } });
+      }
+      if (url.pathname === '/upload/session') return Response.json({ file: { ...file, state: 'PROCESSING' } });
+      if (url.pathname === '/v1beta/files/owned' && init?.method === 'DELETE') return Response.json({});
+      if (url.pathname === '/v1beta/files/owned') return Response.json(file);
+      if (url.pathname.endsWith(':generateContent')) {
+        const body = JSON.parse(String(init?.body));
+        assert.equal(body.generationConfig.maxOutputTokens, 8192);
+        return Response.json({ candidates: [{ content: { role: 'model', parts: [{ text: 'mocked visual description' }] } }] });
+      }
+      throw new Error('Unexpected mock request path: ' + url.pathname);
+    }, async () => {
+      const service = new GeminiService({ apiKey: 'fixture-key' }, { pollIntervalMs: 1, cacheTtlMs: 0 });
+      try {
+        const uploaded = await service.uploadFile(filepath);
+        assert.equal((await service.processFileOrThrow(uploaded, 'private-prompt', 'gemini-3.5-flash')).text, 'mocked visual description');
+        await service.releaseFile(uploaded);
+      } finally { await service.close(); }
+    });
+    assert.equal(calls.length, 5);
+    assert.equal(calls.at(-1), 'DELETE /v1beta/files/owned');
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

@@ -1,317 +1,180 @@
-/**
- * Service for interacting with Google's Gemini API
- * status: active
- * phase: checkpoint-4-gemini-adapter
- * sprint: provider-foundation-first-sprint
- * last_modified: 2026-08-21
- * agent_notes: "Throwing generation seam and owned video-timeout identity; legacy wrapper remains compatible. R3 added pre-cache FAILED rejection for every media kind."
- * insights: "processFileOrThrow preserves original throws; remove the omitted-model bridge at checkpoint 7. R3: FAILED-state is rejected before any checksum-cache insertion so a stale URI cannot survive settlement; the in-flight promise is evicted by the uploadFile finally so the next call retries."
- */
-
-import { 
-  GoogleGenAI,
-  createUserContent,
-  createPartFromUri
-} from '@google/genai';
-import { createLogger } from '../utils/logger.js';
+import { GoogleGenAI, createUserContent, createPartFromUri } from '@google/genai';
+import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { DEFAULT_GEMINI_MODEL } from './provider-config.js';
 import type { GeminiConfig, GeminiFile, GeminiResponse, CachedFile, ProcessedGeminiFile } from '../types/index.js';
 import { FileState } from '../types/index.js';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
-import { setTimeout } from 'timers/promises';
-
-const log = createLogger('GeminiService');
+import { abortable, pause, readBoundedFile } from './operation.js';
+import { uploadGoogleFile } from './google-upload.js';
 
 export class GeminiVideoProcessingTimeoutError extends Error {}
-
+interface Upload { promise: Promise<GeminiFile>; controller: AbortController; waiters: number }
+export interface GeminiLimits {
+  maxUploadBytes?: number;
+  requestTimeoutMs?: number;
+  processingTimeoutMs?: number;
+  maxResponseBytes?: number;
+  maxCachedFiles?: number;
+  cacheTtlMs?: number;
+  pollIntervalMs?: number;
+}
+/** One instance owns one Google account. No uploaded file identifiers cross instances. */
 export class GeminiService {
   private readonly client: GoogleGenAI;
+  private readonly upload: (file: Blob, mimeType: string, signal: AbortSignal) => ReturnType<GoogleGenAI['files']['upload']>;
   private fileCache = new Map<string, CachedFile>();
-  private inFlightUploads = new Map<string, Promise<GeminiFile>>();
-  private readonly cacheExpiration = 24 * 60 * 60 * 1000; // 24 hours in milliseconds
-
-  constructor(config: GeminiConfig) {
-    this.client = new GoogleGenAI({ apiKey: config.apiKey });
-    log.info('Initialized Gemini service');
+  private inFlightUploads = new Map<string, Upload>();
+  private ownedFiles = new Set<string>();
+  private leases = new Map<string, number>();
+  private stopped = false;
+  private readonly expiryTimer: ReturnType<typeof setInterval>;
+  private readonly limits: Required<GeminiLimits>;
+  constructor(config: GeminiConfig, limits: GeminiLimits = {}, client?: GoogleGenAI) {
+    this.limits = { maxUploadBytes: 32 * 1024 * 1024, requestTimeoutMs: 120000,
+      processingTimeoutMs: 300000, maxResponseBytes: 1048576, maxCachedFiles: 16,
+      cacheTtlMs: 3600000, pollIntervalMs: 2000, ...limits };
+    this.expiryTimer = setInterval(() => { void this.prune(); }, Math.max(1000, Math.min(60000, this.limits.cacheTtlMs)));
+    this.expiryTimer.unref();
+    this.upload = client ? (file, mimeType, signal) => client.files.upload({ file, config: { mimeType, abortSignal: signal } })
+      : (file, mimeType, signal) => uploadGoogleFile(file, mimeType, config.apiKey, signal);
+    this.client = client ?? new GoogleGenAI({ apiKey: config.apiKey,
+      httpOptions: { timeout: this.limits.requestTimeoutMs, retryOptions: { attempts: 1 } } });
   }
-
-  /**
-   * Calculate checksum for a file
-   */
-  private async calculateChecksum(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const hash = crypto.createHash('md5');
-      const stream = fs.createReadStream(filePath);
-      
-      stream.on('error', err => reject(err));
-      stream.on('data', chunk => hash.update(chunk));
-      stream.on('end', () => resolve(hash.digest('hex')));
-    });
+  private signal(caller?: AbortSignal, timeout = this.limits.requestTimeoutMs) {
+    const deadline = AbortSignal.timeout(Math.max(1, timeout));
+    return caller ? AbortSignal.any([caller, deadline]) : deadline;
   }
-
-  /**
-   * Check if a file exists in cache and is still valid
-   */
-  private isCacheValid(checksum: string): boolean {
-    const cachedFile = this.fileCache.get(checksum);
-    if (!cachedFile) return false;
-    
-    const now = Date.now();
-    const isExpired = now - cachedFile.timestamp > this.cacheExpiration;
-    
-    return !isExpired;
-  }
-
-  /**
-   * Get file from Gemini API by name
-   */
-  async getFile(name: string): Promise<GeminiFile> {
+  private async removeOwned(name: string): Promise<void> {
+    if (!this.ownedFiles.delete(name)) return;
+    this.leases.delete(name);
     try {
-      const file = await this.client.files.get({ name });
-      log.debug(`Retrieved file details for ${name}`);
-      log.verbose('File details', JSON.stringify(file));
-      
-      if (!file.uri || !file.mimeType) {
-        throw new Error(`Invalid file data returned for ${name}`);
+      const signal = AbortSignal.timeout(3000);
+      await abortable(this.client.files.delete({ name, config: { abortSignal: signal, httpOptions: { timeout: 3000, retryOptions: { attempts: 1 } } } }), signal);
+    } catch { /* Best effort: Google also expires Files API uploads; never log media identifiers. */ }
+  }
+  private async prune(): Promise<void> {
+    for (const [key, value] of this.fileCache) {
+      if (Date.now() - value.timestamp >= this.limits.cacheTtlMs && !this.leases.get(value.name)) {
+        this.fileCache.delete(key);
+        await this.removeOwned(value.name);
       }
-      
-      return {
-        uri: file.uri,
-        mimeType: file.mimeType,
-        name: file.name,
-        state: file.state?.toString()
-      };
+    }
+  }
+  async getFile(name: string, caller?: AbortSignal): Promise<GeminiFile> {
+    const signal = this.signal(caller);
+    const file = await abortable(this.client.files.get({ name, config: { abortSignal: signal } }), signal);
+    if (!file.uri || !file.mimeType) throw new Error('Invalid uploaded media state');
+    return { uri: file.uri, mimeType: file.mimeType, name: file.name, state: file.state };
+  }
+  async waitForVideoProcessing(file: GeminiFile, maxWaitTimeMs = 300000, caller?: AbortSignal): Promise<ProcessedGeminiFile> {
+    if (!file.name) throw new Error('File name is required to check processing status');
+    if (maxWaitTimeMs < 0) throw new GeminiVideoProcessingTimeoutError('Media processing timed out');
+    const signal = this.signal(caller, maxWaitTimeMs);
+    let current = file;
+    try {
+      while (current.state !== FileState.ACTIVE) {
+        if (current.state === FileState.FAILED) throw new Error('Gemini file upload failed');
+        await pause(this.limits.pollIntervalMs, signal);
+        current = await this.getFile(file.name, signal);
+      }
     } catch (error) {
-      log.error('Error retrieving uploaded media state');
+      if (signal.aborted && !caller?.aborted) throw new GeminiVideoProcessingTimeoutError('Media processing timed out');
       throw error;
     }
+    return { ...current, name: file.name, state: FileState.ACTIVE };
   }
-
-  /**
-   * Wait for a video file to be processed
-   */
-  async waitForVideoProcessing(file: GeminiFile, maxWaitTimeMs = 300000): Promise<ProcessedGeminiFile> {
-    if (!file.name) {
-      throw new Error('File name is required to check processing status');
+  async uploadFile(filePath: string, caller?: AbortSignal): Promise<GeminiFile> {
+    if (this.stopped) throw new Error('Gemini service is closed');
+    caller?.throwIfAborted();
+    let upload = this.inFlightUploads.get(filePath);
+    if (!upload) {
+      if (this.inFlightUploads.size >= 8) throw new Error('Concurrent media upload limit reached');
+      const controller = new AbortController();
+      upload = { controller, waiters: 0, promise: this._doUploadFile(filePath, controller.signal) };
+      const owned = upload;
+      this.inFlightUploads.set(filePath, upload);
+      void upload.promise.finally(() => {
+        if (this.inFlightUploads.get(filePath) === owned) this.inFlightUploads.delete(filePath);
+      }).catch(() => { /* Settled or intentionally pending fixture. */ });
     }
-
-    log.info('Waiting for video processing');
-    
-    const startTime = Date.now();
-    let currentFile = file;
-    
-    while (currentFile.state !== FileState.ACTIVE) {
-      // Check if we've exceeded the maximum wait time
-      if (Date.now() - startTime > maxWaitTimeMs) {
-        throw new GeminiVideoProcessingTimeoutError(
-          `Timeout waiting for video processing: ${file.name}`
-        );
-      }
-      
-      // Wait 2 seconds before checking again
-      await setTimeout(2000);
-      
-      // Get updated file status
-      currentFile = await this.getFile(file.name);
-      log.debug(`Video processing status: ${currentFile.state}`);
-      
-      if (currentFile.state === FileState.FAILED) {
-        throw new Error(`Video processing failed: ${file.name}`);
-      }
-    }
-    
-    log.info('Video processing completed');
-    
-    // Ensure all required fields are present
-    if (!currentFile.name || !currentFile.state) {
-      throw new Error('Missing required file information after processing');
-    }
-    
-    return {
-      uri: currentFile.uri,
-      mimeType: currentFile.mimeType,
-      name: currentFile.name,
-      state: currentFile.state
-    };
-  }
-
-  /**
-   * Upload a file to Gemini API with caching
-   */
-  async uploadFile(filePath: string): Promise<GeminiFile> {
-    const existingPromise = this.inFlightUploads.get(filePath);
-    if (existingPromise) {
-      log.info('Coalescing with in-flight media upload');
-      return existingPromise;
-    }
-
-    const uploadPromise = this._doUploadFile(filePath);
-    this.inFlightUploads.set(filePath, uploadPromise);
-
+    upload.waiters++;
     try {
-      return await uploadPromise;
+      const file = await abortable(upload.promise, caller);
+      if (file.name) this.leases.set(file.name, (this.leases.get(file.name) ?? 0) + 1);
+      return file;
     } finally {
-      this.inFlightUploads.delete(filePath);
+      upload.waiters--;
+      if (!upload.waiters && this.inFlightUploads.get(filePath) === upload) upload.controller.abort();
     }
   }
-
-  private async _doUploadFile(filePath: string): Promise<GeminiFile> {
+  private async _doUploadFile(filePath: string, caller: AbortSignal): Promise<GeminiFile> {
+    const mimeTypes: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png',
+      '.webp': 'image/webp', '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg' };
+    const mimeType = mimeTypes[path.extname(filePath).toLowerCase()];
+    if (!mimeType) throw new Error('Unsupported media format');
+    const signal = this.signal(caller, this.limits.processingTimeoutMs + this.limits.requestTimeoutMs);
+    const bytes = await readBoundedFile(filePath, this.limits.maxUploadBytes, signal);
+    const checksum = createHash('sha256').update(mimeType).update(bytes).digest('hex');
+    await this.prune();
+    const cached = this.fileCache.get(checksum);
+    if (cached) return { uri: cached.uri, mimeType: cached.mimeType, name: cached.name, state: cached.state };
+    if (this.fileCache.size + this.inFlightUploads.size > this.limits.maxCachedFiles) throw new Error('Media cache capacity reached');
+    let name: string | undefined;
     try {
-      log.debug(`Processing file upload request: ${filePath}`);
-      
-      // Calculate checksum for caching
-      const checksum = await this.calculateChecksum(filePath);
-      log.debug(`File checksum: ${checksum}`);
-      
-      // Check if file is in cache and still valid
-      const cachedFile = this.fileCache.get(checksum);
-      if (cachedFile && this.isCacheValid(checksum)) {
-        log.info('Using cached media upload');
-        
-        // Return cached file info
-        return {
-          uri: cachedFile.uri,
-          mimeType: cachedFile.mimeType,
-          name: cachedFile.name,
-          state: cachedFile.state
-        };
-      }
-      
-      // Determine MIME type based on file extension
-      const ext = path.extname(filePath).toLowerCase();
-      let mimeType: string;
-      let isVideo = false;
-      
-      if (['.jpg', '.jpeg'].includes(ext)) {
-        mimeType = 'image/jpeg';
-      } else if (ext === '.png') {
-        mimeType = 'image/png';
-      } else if (ext === '.webp') {
-        mimeType = 'image/webp';
-      } else if (ext === '.mp4') {
-        mimeType = 'video/mp4';
-        isVideo = true;
-      } else if (ext === '.mp3') {
-        mimeType = 'audio/mp3';
-      } else if (ext === '.wav') {
-        mimeType = 'audio/wav';
-      } else if (ext === '.ogg') {
-        mimeType = 'audio/ogg';
-      } else {
-        throw new Error(`Unsupported file extension: ${ext}`);
-      }
-      
-      // Upload file to Google's servers
-      const uploadedFile = await this.client.files.upload({
-        file: filePath,
-        config: { mimeType }
-      });
-      
-      log.info('Media file uploaded successfully');
-      log.verbose('Uploaded file details', JSON.stringify(uploadedFile));
-      
-      if (!uploadedFile.uri || !uploadedFile.name) {
-        throw new Error('File upload failed: Missing URI or name');
-      }
-      
-      // Create file object
-      const file: GeminiFile = {
-        uri: uploadedFile.uri,
-        mimeType,
-        name: uploadedFile.name,
-        state: uploadedFile.state?.toString()
-      };
-
-      // R3: Reject every supported media kind whose immediate upload state is FAILED
-      // BEFORE any checksum-based completed-cache insertion. The polling loop already
-      // throws on FAILED for videos; this guarantees image/audio/poll-already-ACTIVE
-      // paths do not cache a dead URI. The in-flight promise is evicted by the caller's
-      // `finally` so a subsequent call re-attempts the upload afresh.
-      if (file.state === FileState.FAILED) {
-        throw new Error(`Gemini file upload failed: ${file.name ?? filePath}`);
-      }
-
-      // For videos, wait for processing to complete
-      if (isVideo && file.state === FileState.PROCESSING) {
-        const processedFile = await this.waitForVideoProcessing(file);
-
-        // Update cache with processed file
-        this.fileCache.set(checksum, {
-          fileId: processedFile.name,
-          checksum,
-          uri: processedFile.uri,
-          mimeType: processedFile.mimeType,
-          name: processedFile.name,
-          state: processedFile.state,
-          timestamp: Date.now()
-        });
-
-        return processedFile;
-      }
-      
-      // Add to cache
-      if (!file.name) {
-        throw new Error('File name is required for caching');
-      }
-      
-      this.fileCache.set(checksum, {
-        fileId: file.name,
-        checksum,
-        uri: file.uri,
-        mimeType: file.mimeType,
-        name: file.name,
-        state: file.state || FileState.ACTIVE,
-        timestamp: Date.now()
-      });
-      
+      // A bounded snapshot prevents a changing source file from bypassing the upload cap.
+      const uploadSignal = this.signal(signal);
+      const upload = this.upload(new Blob([new Uint8Array(bytes)], { type: mimeType }), mimeType, uploadSignal);
+      // Capture late successful uploads after cancellation so they can still be deleted.
+      void upload.then(async value => {
+        if (value.name && (uploadSignal.aborted || this.stopped)) {
+          this.ownedFiles.add(value.name);
+          await this.removeOwned(value.name);
+        }
+      }, () => { /* Settled or intentionally pending fixture. */ });
+      const value = await abortable(upload, uploadSignal);
+      name = value.name;
+      if (name) this.ownedFiles.add(name);
+      if (!value.uri || !name) throw new Error('File upload failed: Missing URI or name');
+      let file: GeminiFile = { uri: value.uri, mimeType, name, state: value.state };
+      if (file.state === FileState.FAILED) throw new Error('Gemini file upload failed');
+      if (file.state === FileState.PROCESSING) file = await this.waitForVideoProcessing(file, this.limits.processingTimeoutMs, signal);
+      if (uploadSignal.aborted || this.stopped) { signal.throwIfAborted(); throw new Error('Gemini service is closed'); }
+      this.fileCache.set(checksum, { ...file, name, state: file.state ?? FileState.ACTIVE,
+        fileId: name, checksum, timestamp: Date.now() });
       return file;
     } catch (error) {
-      log.error('Error uploading media file');
+      if (name) await this.removeOwned(name);
       throw error;
     }
   }
-
-  /**
-   * Process a file with Gemini API and preserve generation failures
-   */
-  async processFileOrThrow(
-    file: GeminiFile,
-    prompt: string,
-    modelName: string
-  ): Promise<GeminiResponse> {
-    log.debug(`Processing file with model ${modelName}`);
-    log.verbose('Processing with parameters', JSON.stringify({ file, prompt, modelName }));
-
-    const response = await this.client.models.generateContent({
-      model: modelName,
-      contents: createUserContent([
-        createPartFromUri(file.uri, file.mimeType),
-        prompt
-      ])
-    });
-
-    log.debug('Received response from Gemini API');
-    log.verbose('Gemini API response', JSON.stringify(response));
-
-    return {
-      text: response.text || ''
-    };
+  async releaseFile(file: GeminiFile): Promise<void> {
+    if (file.name) this.leases.set(file.name, Math.max(0, (this.leases.get(file.name) ?? 0) - 1));
+    await this.prune();
   }
-
-  /**
-   * Compatibility wrapper for direct service callers
-   */
-  async processFile(file: GeminiFile, prompt: string, modelName?: string): Promise<GeminiResponse> {
-    try {
-      return await this.processFileOrThrow(file, prompt, modelName ?? DEFAULT_GEMINI_MODEL);
-    } catch (error) {
-      log.error('Error processing media with Gemini API');
-      return {
-        text: `Error processing file: ${error instanceof Error ? error.message : String(error)}`,
-        isError: true
-      };
-    }
+  async processFileOrThrow(file: GeminiFile, prompt: string, modelName: string, caller?: AbortSignal): Promise<GeminiResponse> {
+    const signal = this.signal(caller);
+    const response = await abortable(this.client.models.generateContent({
+      model: modelName, contents: createUserContent([createPartFromUri(file.uri, file.mimeType), prompt]),
+      config: { abortSignal: signal, maxOutputTokens: 8192,
+        httpOptions: { timeout: this.limits.requestTimeoutMs, retryOptions: { attempts: 1 } } }
+    }), signal);
+    const text = response.text ?? '';
+    if (Buffer.byteLength(text, 'utf8') > this.limits.maxResponseBytes) throw new Error('Provider response exceeds limit');
+    return { text };
+  }
+  async processFile(file: GeminiFile, prompt: string, modelName = DEFAULT_GEMINI_MODEL): Promise<GeminiResponse> {
+    try { return await this.processFileOrThrow(file, prompt, modelName); }
+    catch { return { text: 'Error processing file: Gemini request failed.', isError: true }; }
+  }
+  async close(): Promise<void> {
+    if (this.stopped) return;
+    this.stopped = true;
+    clearInterval(this.expiryTimer);
+    for (const upload of this.inFlightUploads.values()) upload.controller.abort();
+    await Promise.allSettled([...this.inFlightUploads.values()].map(value => value.promise));
+    this.inFlightUploads.clear();
+    this.fileCache.clear();
+    this.leases.clear();
+    await Promise.all([...this.ownedFiles].map(name => this.removeOwned(name)));
   }
 }

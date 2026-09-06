@@ -13,6 +13,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile
@@ -1350,7 +1351,7 @@ test('canonical containment accepts a regular file directly inside an allowed ro
 
 test('canonical containment helper is exported as the adapter call-site implementation', async () => {
   const filepath = await writeTempFile('exported-helper.jpg', Buffer.from('payload'));
-  assert.equal(await canonicalizeContainedFile(filepath, [tempRoot]), filepath);
+  assert.equal(await canonicalizeContainedFile(filepath, [tempRoot]), await realpath(filepath));
   const source = await readFile(
     path.resolve(process.cwd(), 'src/services/openai-compatible-recognition-provider.ts'),
     'utf8'

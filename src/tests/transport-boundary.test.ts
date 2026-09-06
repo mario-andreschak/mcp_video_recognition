@@ -4,7 +4,6 @@
 
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -24,8 +23,9 @@ test('runtime manifest retains the MCP SDK dependency', async () => {
     devDependencies?: Record<string, string>;
   };
 
-  assert.equal(manifest.dependencies?.['@modelcontextprotocol/sdk'], '^1.10.1');
-  assert.equal(manifest.devDependencies?.['@modelcontextprotocol/sdk'], undefined);
+  assert.equal(manifest.dependencies?.['@modelcontextprotocol/server'], '2.0.0');
+  assert.equal(manifest.dependencies?.['@modelcontextprotocol/sdk'], undefined);
+  assert.equal(manifest.devDependencies?.['@modelcontextprotocol/sdk'], '1.29.0');
 });
 
 test('standalone client spawns stdio server and completes a clean handshake at info log level', async () => {
@@ -106,7 +106,9 @@ test('Streamable HTTP initializes on sessionless POST and supports tool calls', 
     provider,
     transport: 'streamable-http',
     host: '127.0.0.1',
-    port: 0
+    port: 0,
+    authToken: 'test-bearer-private-owner-0123456789',
+    mediaRoots: [repositoryRoot]
   });
   await server.start();
   t.after(async () => {
@@ -121,7 +123,8 @@ test('Streamable HTTP initializes on sessionless POST and supports tool calls', 
     version: '1.0.0'
   });
   const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${port}/mcp`)
+    new URL(`http://127.0.0.1:${port}/mcp`),
+    { requestInit: { headers: { authorization: 'Bearer test-bearer-private-owner-0123456789' } } }
   );
   await client.connect(transport, { timeout: 10_000 });
   t.after(async () => {
@@ -137,7 +140,7 @@ test('Streamable HTTP initializes on sessionless POST and supports tool calls', 
   const result = await client.callTool(
     {
       name: 'image_recognition',
-      arguments: { filepath: 'transport-test.png' }
+      arguments: { filepath: resolve(repositoryRoot, 'README.md') }
     },
     undefined,
     { timeout: 10_000 }
@@ -167,35 +170,4 @@ test('invalid startup configuration is visible on stderr', async () => {
       return true;
     }
   );
-});
-
-test('fork registration, routing, and authentication additions remain absent', async () => {
-  const serverSource = await readFile(resolve(repositoryRoot, 'src/server.ts'), 'utf8');
-  const forbiddenServerTokens = [
-    'registerTool(',
-    'annotations:',
-    'parallelDispatcher',
-    'recognitionProviders',
-    'rateLimitTracker',
-    'throttlingScheduler',
-    'fallbackProvider',
-    'routingPolicy',
-    'ctx.mcpReq.signal',
-    'Authorization'
-  ];
-
-  for (const token of forbiddenServerTokens) {
-    assert.equal(serverSource.includes(token), false, `unexpected server token: ${token}`);
-  }
-
-  const forbiddenForkFiles = [
-    'src/services/parallel-dispatcher.ts',
-    'src/services/rate-limit-tracker.ts',
-    'src/services/recognition-providers.ts',
-    'src/services/throttling-scheduler.ts'
-  ];
-
-  for (const relativePath of forbiddenForkFiles) {
-    assert.equal(existsSync(resolve(repositoryRoot, relativePath)), false, `unexpected fork file: ${relativePath}`);
-  }
 });

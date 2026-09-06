@@ -9,15 +9,15 @@
  */
 
 import { z } from 'zod';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 
 /**
  * Common parameters for all recognition tools
  */
 export const RecognitionParamsSchema = z.object({
-  filepath: z.string().describe('Path to the media file to analyze'),
-  prompt: z.string().default('Describe this content').describe('Custom prompt for the recognition'),
-  modelname: z.string().optional().describe('Model override to use for recognition')
+  filepath: z.string().min(1).max(4096).describe('Path to the media file to analyze'),
+  prompt: z.string().max(65536).default('Describe this content').describe('Custom prompt for the recognition'),
+  modelname: z.string().min(1).max(200).optional().describe('Model override to use for recognition')
 });
 
 export type {

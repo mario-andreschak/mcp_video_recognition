@@ -11,6 +11,7 @@
 
 import { readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { readBoundedFile, abortable } from './operation.js';
 import type {
   MediaKind,
   ProviderCallOptions,
@@ -55,7 +56,8 @@ const assertValidModelIdentifier = (model: string): void => {
 const isCanonicalChild = (root: string, candidate: string): boolean => {
   const rootForm = process.platform === 'win32' ? root.toLowerCase() : root;
   const candidateForm = process.platform === 'win32' ? candidate.toLowerCase() : candidate;
-  return candidateForm.startsWith(rootForm + path.sep);
+  const relative = path.relative(rootForm, candidateForm);
+  return relative !== '' && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith('..' + path.sep);
 };
 
 export const canonicalizeContainedFile = async (
@@ -92,7 +94,12 @@ export const canonicalizeContainedFile = async (
     });
   }
   for (const root of roots) {
-    if (isCanonicalChild(root, canonical)) return canonical;
+    try {
+      // Resolve both sides: Windows short names and directory aliases otherwise
+      // compare unequal even when they identify the same allowed directory.
+      const canonicalRoot = await realpath(root);
+      if (isCanonicalChild(canonicalRoot, canonical)) return canonical;
+    } catch { /* An unavailable root grants no access. */ }
   }
   throw createProviderFailure({
     provider: 'openai-compatible',
@@ -452,7 +459,8 @@ const readFileSafely = async (
     throw mappedFailure({ category: 'unsupported-media' });
   }
   try {
-    const buffer = await readMediaFile(filepath);
+    const buffer = readMediaFile === readFile ? await readBoundedFile(filepath, maxBytes) : await readMediaFile(filepath);
+    if (buffer.length > maxBytes) throw new Error('Media exceeds size limit');
     return buffer.toString('base64');
   } catch (cause) {
     throw mappedFailure({ category: 'unsupported-media', cause });
@@ -521,7 +529,7 @@ export class OpenAICompatibleRecognitionProvider implements RecognitionProvider 
     const mediaType = resolveMediaType(request.mediaKind, canonicalFilepath);
 
     // 7. File metadata size guard, then read+base64 the canonical path.
-    const base64 = await this.readCanonicalFile(canonicalFilepath);
+    const base64 = await abortable(this.readCanonicalFile(canonicalFilepath), options?.signal);
     const mediaPart = buildMediaPart(request.mediaKind, mediaType, base64);
 
     // 8. Build the exact text-first body.

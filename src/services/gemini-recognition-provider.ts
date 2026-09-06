@@ -8,6 +8,7 @@
  */
 
 import path from 'node:path';
+import { abortable, pause } from './operation.js';
 import type { RecognitionProvider, RecognitionRequest, ProviderCallOptions } from '../types/provider.js';
 import {
   GeminiService,
@@ -80,6 +81,8 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
     this.cooldowns = runtime.cooldowns ?? createProviderModelCooldownStore();
   }
 
+  async close(): Promise<void> { await this.service.close(); }
+
   async recognize(request: RecognitionRequest, options?: ProviderCallOptions) {
     if (options?.signal?.aborted === true) {
       throw createProviderFailure({
@@ -135,13 +138,16 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
 
     let file;
     try {
-      file = await this.service.uploadFile(canonicalFilepath);
+      file = await this.service.uploadFile(canonicalFilepath, options?.signal);
     } catch (cause) {
       throw mapGeminiPreparationFailure(cause);
     }
+    try {
     const now = this.runtime.now ?? Date.now;
+    const deadline = AbortSignal.timeout(this.config.recovery.deadlineSeconds * 1000);
+    const signal = options?.signal ? AbortSignal.any([options.signal, deadline]) : deadline;
     const sleep = this.runtime.sleep ?? (async (ms: number) => {
-      await new Promise<void>(resolve => setTimeout(resolve, ms));
+      await pause(ms, signal);
     });
     const backupProvider = this.runtime.backupProvider;
     const outcome = await runPreparedGeminiRoute({
@@ -156,7 +162,7 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
       cooldownSeconds: this.config.recovery.cooldownSeconds
     }, {
       now,
-      sleep,
+      sleep: ms => abortable(sleep(ms), signal),
       cooldowns: this.cooldowns,
       diagnosticSink: this.runtime.diagnosticSink,
       ...(this.config.recovery.backup.enabled && backupProvider !== undefined
@@ -168,13 +174,13 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
                 filepath: canonicalFilepath,
                 prompt: request.prompt,
                 mediaKind
-              }, options)
+              }, { signal })
             }
           }
         : {}),
       invokePreparedModel: async model => {
         try {
-          const response = await this.service.processFileOrThrow(file, request.prompt, model);
+          const response = await this.service.processFileOrThrow(file, request.prompt, model, signal);
           return { text: response.text };
         } catch (cause) {
           throw normalizeGeminiGenerationFailure(cause);
@@ -190,5 +196,6 @@ export class GeminiRecognitionProvider implements RecognitionProvider {
       reason: outcome.reason,
       attempts: outcome.attempts
     });
+    } finally { await this.service.releaseFile?.(file); }
   }
 }

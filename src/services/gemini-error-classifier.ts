@@ -7,6 +7,7 @@
  * insights: "SDK 0.9.0 transport identities are erased. Retry timing is accepted only from direct error.details[0].retryDelay using fixed-three-decimal seconds and never changes eligibility."
  */
 
+import { ApiError } from '@google/genai';
 import type { ProviderFailure } from '../types/provider.js';
 import { createProviderFailure, isProviderFailure } from './provider-failure.js';
 
@@ -103,6 +104,25 @@ export const normalizeGeminiGenerationFailure = (cause: unknown): NormalizedGemi
     } catch {
       return malformed(cause);
     }
+  }
+  if (cause instanceof ApiError) {
+    if (!Number.isInteger(cause.status) || cause.status < 400 || cause.status > 599
+      || Buffer.byteLength(cause.message, 'utf8') > GEMINI_ERROR_MESSAGE_MAX_BYTES) return malformed(cause);
+    let record: Record<string, unknown> | undefined;
+    try {
+      const body: unknown = JSON.parse(cause.message);
+      if (typeof body === 'object' && body !== null && 'error' in body &&
+        typeof body.error === 'object' && body.error !== null && !Array.isArray(body.error))
+        record = body.error as Record<string, unknown>;
+    } catch { /* ApiError may carry a plain HTTP status message. */ }
+    if (record && direct(record, 'code') !== undefined && direct(record, 'code') !== cause.status) return malformed(cause);
+    const code = record && direct(record, 'status');
+    const category = categoryForStatus(cause.status);
+    const retryAfterMs = record && parseRetryDelayMs(record);
+    return { envelopeState: 'usable', failure: createProviderFailure({ provider: 'gemini', category,
+      safeMessage: safeMessageForCategory(category), status: cause.status,
+      ...(typeof code === 'string' && /^[A-Z_]{1,64}$/u.test(code) ? { code } : {}),
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs }), cause }) };
   }
   if (!(cause instanceof Error)) return unknown(cause);
 

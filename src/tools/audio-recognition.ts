@@ -11,7 +11,7 @@
 import { createLogger } from '../utils/logger.js';
 import { mapRecognitionToolFailure } from './recognition-tool-failure.js';
 import { AudioRecognitionParamsSchema } from '../types/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { AudioRecognitionParams } from '../types/index.js';
 import type { RecognitionProvider, RecognitionRequest } from '../types/provider.js';
 

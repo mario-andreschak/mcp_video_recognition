@@ -8,7 +8,8 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import type { GoogleGenAI } from '@google/genai';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
@@ -45,9 +46,7 @@ const file: GeminiFile = {
 };
 
 const serviceWithClient = (client: GenerateContentClient): GeminiService => {
-  const service = new GeminiService({ apiKey: 'credential-free-test-key' });
-  (service as unknown as { client: GenerateContentClient }).client = client;
-  return service;
+  return new GeminiService({ apiKey: 'credential-free-test-key' }, {}, client as unknown as GoogleGenAI);
 };
 
 // Behavioural test filesystem: real on-disk files drive the production calculateChecksum
@@ -113,7 +112,7 @@ test('processFile remains a delegating compatibility wrapper for success and err
 
   assert.deepEqual(await service.processFile(file, 'prompt'), { text: 'wrapper success' });
   assert.deepEqual(await service.processFile(file, 'prompt', 'explicit-model'), {
-    text: 'Error processing file: original generation failure',
+    text: 'Error processing file: Gemini request failed.',
     isError: true
   });
   assert.deepEqual(calls, [DEFAULT_GEMINI_MODEL, 'explicit-model']);
@@ -125,7 +124,7 @@ test('processFile preserves non-Error compatibility text', async () => {
   });
   service.processFileOrThrow = async () => Promise.reject('string failure');
   assert.deepEqual(await service.processFile(file, 'prompt'), {
-    text: 'Error processing file: string failure',
+    text: 'Error processing file: Gemini request failed.',
     isError: true
   });
 });
@@ -145,14 +144,6 @@ test('waitForVideoProcessing throws the service-owned timeout identity immediate
   );
 });
 
-test('source preserves the 300000 default, polling delay, cache, and one generation implementation', async () => {
-  const source = await readFile(path.resolve(process.cwd(), 'src/services/gemini.ts'), 'utf8');
-  assert.match(source, /waitForVideoProcessing\(file: GeminiFile, maxWaitTimeMs = 300000\)/u);
-  assert.match(source, /await setTimeout\(2000\)/u);
-  assert.match(source, /private fileCache = new Map<string, CachedFile>\(\)/u);
-  assert.equal((source.match(/\.models\.generateContent\(/gu) ?? []).length, 1);
-  assert.match(source, /return await this\.processFileOrThrow\(/u);
-});
 // =============================================================================
 // R3/R4 behavioural proof: replacement for the previous monkey-patching tests.
 // Behavioural only — production calculateChecksum, inFlightUploads, fileCache,

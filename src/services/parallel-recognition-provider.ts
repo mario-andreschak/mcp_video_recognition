@@ -30,6 +30,8 @@ export class ParallelRecognitionProvider implements RecognitionProvider {
     this.providerLabel = providerLabel;
   }
 
+  async close(): Promise<void> { await this.innerProvider.close?.(); }
+
   async recognize(request: RecognitionRequest, options?: ProviderCallOptions): Promise<RecognitionResult> {
     if (this.promptCount <= 1) {
       return this.innerProvider.recognize(request, options);

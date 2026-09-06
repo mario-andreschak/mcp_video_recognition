@@ -51,6 +51,7 @@ export interface ProviderFailure extends Error {
 }
 
 export interface RecognitionProvider {
+  close?(): Promise<void>;
   recognize(
     request: RecognitionRequest,
     options?: ProviderCallOptions

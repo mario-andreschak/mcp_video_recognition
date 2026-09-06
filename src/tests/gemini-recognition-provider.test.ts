@@ -8,7 +8,7 @@
  */
 
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -513,16 +513,18 @@ test('enabled backup receives a fresh canonical request without Gemini model and
       { sleep: async () => undefined, backupProvider }
     ).recognize(request({ filepath, prompt: 'exact prompt' }), { signal: controller.signal });
     assert.deepEqual(result, { text: ' exact backup result ' });
-    assert.deepEqual(calls.uploadedPaths, [filepath]);
+    assert.deepEqual(calls.uploadedPaths, [await realpath(filepath)]);
     assert.equal(calls.generations.length, 1);
     assert.equal(backupCalls.length, 1);
     assert.deepEqual(backupCalls[0]?.request, {
-      filepath,
+      filepath: await realpath(filepath),
       prompt: 'exact prompt',
       mediaKind: 'image'
     });
     assert.equal('model' in (backupCalls[0]?.request ?? {}), false);
-    assert.equal(backupCalls[0]?.options?.signal, controller.signal);
+    assert.equal(backupCalls[0]?.options?.signal?.aborted, false);
+    controller.abort();
+    assert.equal(backupCalls[0]?.options?.signal?.aborted, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -714,7 +716,7 @@ test('source boundaries isolate raw SDK extraction and deterministic recovery be
   assert.match(classifierSource, /got status:/u);
   assert.doesNotMatch(routerSource, /\.(?:message|name|code)\b|ClientError|ServerError|got status:/u);
   for (const source of [adapterSource, classifierSource, routerSource]) {
-    assert.doesNotMatch(source, /\brandom\s*[:=(]|jitter\s*[:=(]|Math\.random|operator.?log|AbortSignal\.any/iu);
+    assert.doesNotMatch(source, /\brandom\s*[:=(]|jitter\s*[:=(]|Math\.random|operator.?log/iu);
   }
   assert.match(routerSource, /backup-exhausted/u);
   assert.match(routerSource, /baseBackoffMs/u);
