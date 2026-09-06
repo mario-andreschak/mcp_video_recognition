@@ -1,3 +1,5 @@
+Version 2 transport, authentication, media lifecycle and SDK changes are documented in [2026 migration](2026-MIGRATION.md).
+
 # Security Reference
 
 The [README](../README.md) has the short version. This file holds the full endpoint, transport, resource, and credential rules.
@@ -44,4 +46,4 @@ That means multiple provider calls per tool call, so expect more cost, latency, 
 
 The [Provider Recovery Reference](RECOVERY.md) has the exact opt-in attempt, timing, cooldown, and final-backup semantics.
 
-For OpenAI-compatible calls, a caller abort maps to `cancelled` / `CALLER_CANCELLED`, and expiration of the adapter's private timer maps to `timeout` / `ADAPTER_TIMEOUT`. Gemini keeps its 300000 ms video-processing wait, which maps to `timeout` / `GEMINI_VIDEO_PROCESSING_TIMEOUT`. Gemini has no adapter-wide deadline.
+For OpenAI-compatible calls, a caller abort maps to `cancelled` / `CALLER_CANCELLED`, and expiration of the adapter's private timer maps to `timeout` / `ADAPTER_TIMEOUT`. Gemini keeps its 300000 ms video-processing wait, which maps to `timeout` / `GEMINI_VIDEO_PROCESSING_TIMEOUT`. Gemini generation and upload requests have a 120-second default deadline, plus the configured recovery deadline after preparation; see [version 2 limits](2026-MIGRATION.md).

@@ -1,6 +1,6 @@
 {
   "name": "mcp-video-recognition",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "MCP server and standalone client for image, audio, and video recognition",
   "main": "dist/index.js",
   "type": "module",
@@ -12,9 +12,13 @@
     "dev": "tsc -w & node --watch dist/index.js",
     "debug": "npm run build && npx @modelcontextprotocol/inspector node dist/index.js",
     "lint": "eslint src",
-    "test": "tsc && node --test dist/tests/baseline.test.js dist/tests/transport-boundary.test.js dist/tests/provider-contract.test.js dist/tests/provider-config.test.js dist/tests/gemini-service.test.js dist/tests/gemini-recognition-provider.test.js dist/tests/openai-compatible-recognition-provider.test.js dist/tests/provider-injection.test.js dist/tests/gemini-sdk-characterization.test.js dist/tests/provider-foundation-gate.test.js dist/tests/gemini-recovery-config.test.js dist/tests/gemini-error-classifier.test.js dist/tests/gemini-recovery-router.test.js dist/tests/provider-cooldown-store.test.js dist/tests/recovery-diagnostics.test.js dist/tests/canonical-invariants.test.js dist/tests/parallel-recognition-provider.test.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
     "check:canonical-invariants": "node scripts/check-canonical-invariants.mjs",
-    "verify:provider-foundation": "npm run build && npm test"
+    "verify:provider-foundation": "npm run build && npm test",
+    "typecheck": "tsc --noEmit",
+    "prepack": "npm run build",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "test:package": "node scripts/package-acceptance.mjs"
   },
   "keywords": [
     "mcp",
@@ -27,21 +31,39 @@
   "author": "",
   "license": "MIT",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22"
   },
   "dependencies": {
-    "@google/genai": "^0.9.0",
-    "@modelcontextprotocol/sdk": "^1.10.1",
-    "express": "^5.1.0",
-    "zod": "^3.24.3"
+    "@google/genai": "2.21.0",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@modelcontextprotocol/node": "2.0.0",
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4.5.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/express": "^5.0.1",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@types/node": "^22.14.1",
     "eslint": "^10.6.0",
     "globals": "^17.7.0",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.62.1"
-  }
+  },
+  "bin": {
+    "mcp-video-recognition": "dist/index.js",
+    "mcp-video-recognition-client": "dist/client.js"
+  },
+  "exports": {
+    "./server": "./dist/server.js",
+    "./providers/gemini": "./dist/services/gemini.js"
+  },
+  "files": [
+    "dist",
+    "!dist/tests",
+    "!dist/**/*.map",
+    "README.md",
+    "LICENSE",
+    ".env.example",
+    "docs"
+  ]
 }

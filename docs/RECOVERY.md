@@ -1,3 +1,5 @@
+Version 2 transport, authentication, media lifecycle and SDK changes are documented in [2026 migration](2026-MIGRATION.md).
+
 # Provider Recovery Reference
 
 This is the operator guide for Gemini model recovery and the optional OpenAI-compatible backup. Provider selection, credentials, endpoint safety, media containment, and the base provider variables live in the [main README](../README.md#configuration).
@@ -34,9 +36,9 @@ Media validation, preparation, upload, and Gemini video processing all happen be
 
 Only started provider invocations count as attempts, and total Gemini request invocations can't exceed `GEMINI_MAX_ATTEMPTS`.
 
-The 60-second default request timeout applies only to the OpenAI-compatible adapter, where it's capped at 120 seconds. Gemini has no adapter-wide timeout.
+OpenAI-compatible calls retain their 60-second default request timeout (maximum 120 seconds). Gemini requests have a 120-second default deadline and cancellable preparation; see [version 2 limits](2026-MIGRATION.md).
 
-The recovery deadline only gates when a new candidate can start. An in-flight Gemini request isn't cancelled when the deadline passes, and its late success still counts as the tool result.
+The recovery deadline gates new candidates and now cancels in-flight Gemini generation, retry waits and backup calls. Caller cancellation also propagates through upload and processing.
 
 Eligible transitions use capped exponential backoff. A valid adapter-normalized `retryAfterMs` replaces the normal backoff but is still capped by `GEMINI_MAX_BACKOFF_MS`.
 

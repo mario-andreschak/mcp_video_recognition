@@ -1,3 +1,5 @@
+Version 2 transport, authentication, media lifecycle and SDK changes are documented in [2026 migration](2026-MIGRATION.md).
+
 <!--
 status: active
 phase: docs-clarification

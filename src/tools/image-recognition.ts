@@ -11,7 +11,7 @@
 import { createLogger } from '../utils/logger.js';
 import { mapRecognitionToolFailure } from './recognition-tool-failure.js';
 import { ImageRecognitionParamsSchema } from '../types/index.js';
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolResult } from '@modelcontextprotocol/server';
 import type { ImageRecognitionParams } from '../types/index.js';
 import type { RecognitionProvider, RecognitionRequest } from '../types/provider.js';
 

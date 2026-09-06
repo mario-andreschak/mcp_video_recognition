@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 /**
  * Entry point for the MCP video recognition server
  * status: active
@@ -8,6 +9,7 @@
  * insights: "Recovery events are preformatted to one bounded string; Logger receives no second data/error argument."
  */
 
+import path from 'node:path';
 import { Server } from './server.js';
 import { createLogger, LogLevel, Logger } from './utils/logger.js';
 import { loadRecognitionProviderConfig, parseParallelPrompts } from './services/provider-config.js';
@@ -73,7 +75,20 @@ async function loadConfig(): Promise<ServerConfig> {
   // Construct the selected provider
   let provider: RecognitionProvider;
   if (providerConfig.provider === 'gemini') {
-    const service = new GeminiService({ apiKey: providerConfig.apiKey });
+    const limit = (key: string, fallback: number, min: number, max: number) => {
+      const value = process.env[key];
+      if (value === undefined) return fallback;
+      if (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(Number(value)) || Number(value) < min || Number(value) > max) throw new Error(key + ' is outside its supported range');
+      return Number(value);
+    };
+    const service = new GeminiService({ apiKey: providerConfig.apiKey }, {
+      maxUploadBytes: limit('GEMINI_MAX_UPLOAD_BYTES', 33554432, 1024, 268435456),
+      requestTimeoutMs: limit('GEMINI_REQUEST_TIMEOUT_MS', 120000, 1000, 120000),
+      processingTimeoutMs: limit('GEMINI_PROCESSING_TIMEOUT_MS', 300000, 1000, 300000),
+      maxResponseBytes: limit('GEMINI_MAX_RESPONSE_BYTES', 1048576, 1024, 4194304),
+      maxCachedFiles: limit('GEMINI_MAX_CACHED_FILES', 16, 1, 64),
+      cacheTtlMs: limit('GEMINI_CACHE_TTL_MS', 3600000, 0, 86400000)
+    });
     const cooldowns = createProviderModelCooldownStore();
     const backupProvider = providerConfig.recovery.backup.enabled
       ? new OpenAICompatibleRecognitionProvider(providerConfig.recovery.backup.providerConfig)
@@ -103,7 +118,12 @@ async function loadConfig(): Promise<ServerConfig> {
     ? undefined
     : configuredHost;
 
+  const mediaRoots = process.env.ALLOWED_MEDIA_ROOTS?.split(path.delimiter).filter(Boolean);
   return {
+    authToken: process.env.MCP_AUTH_TOKEN,
+    allowedHosts: process.env.MCP_ALLOWED_HOSTS?.split(',').filter(Boolean),
+    allowedOrigins: process.env.MCP_ALLOWED_ORIGINS?.split(',').filter(Boolean),
+    mediaRoots,
     provider,
     transport,
     port,
@@ -143,14 +163,14 @@ async function main(): Promise<void> {
     
     log.info('Server started successfully');
   } catch (error) {
-    log.fatal('Failed to start server', error);
+    const variable = error instanceof Error ? /^[A-Z][A-Z0-9_]{2,48}(?= )/u.exec(error.message)?.[0] : undefined;
+    log.fatal('Failed to start server; check configuration' + (variable ? ': ' + variable : ''));
     process.exitCode = 1;
   }
 }
 
 // Start the server
-main().catch(error => {
-  const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-  process.stderr.write(`Unhandled error: ${message}\n`);
+main().catch(() => {
+  process.stderr.write('Unhandled startup error\n');
   process.exitCode = 1;
 });

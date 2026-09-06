@@ -522,7 +522,9 @@ test('enabled backup receives a fresh canonical request without Gemini model and
       mediaKind: 'image'
     });
     assert.equal('model' in (backupCalls[0]?.request ?? {}), false);
-    assert.equal(backupCalls[0]?.options?.signal, controller.signal);
+    assert.equal(backupCalls[0]?.options?.signal?.aborted, false);
+    controller.abort();
+    assert.equal(backupCalls[0]?.options?.signal?.aborted, true);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -714,7 +716,7 @@ test('source boundaries isolate raw SDK extraction and deterministic recovery be
   assert.match(classifierSource, /got status:/u);
   assert.doesNotMatch(routerSource, /\.(?:message|name|code)\b|ClientError|ServerError|got status:/u);
   for (const source of [adapterSource, classifierSource, routerSource]) {
-    assert.doesNotMatch(source, /\brandom\s*[:=(]|jitter\s*[:=(]|Math\.random|operator.?log|AbortSignal\.any/iu);
+    assert.doesNotMatch(source, /\brandom\s*[:=(]|jitter\s*[:=(]|Math\.random|operator.?log/iu);
   }
   assert.match(routerSource, /backup-exhausted/u);
   assert.match(routerSource, /baseBackoffMs/u);
